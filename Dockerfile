@@ -1,5 +1,5 @@
 # Start from a default ubuntu image.
-FROM ubuntu:22.04
+FROM debian:bookworm-slim
 
 # Copy/Compile my fuzzer
 COPY fuzzer /

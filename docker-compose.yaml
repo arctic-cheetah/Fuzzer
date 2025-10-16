@@ -1,0 +1,9 @@
+version: '3'
+services:
+  awesome_fuzzer:
+    image: fuzzer 
+    volumes:
+      - ./binaries:/binaries
+      - ./example_inputs:/example_inputs
+      - ./fuzzer_output:/fuzzer_output
+
