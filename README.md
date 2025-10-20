@@ -1,14 +1,19 @@
 # How to run the container
+
 1. Build the image:
+
 ```
 docker build -t fuzzer .
 ```
+
 2. Use docker compose to run the containers with the correct mounts :)
+
 ```
 docker compose up
 ```
 
-# template:
+# template
+
 This folder is a possible example submission.
 
 As a student **you can change any file in this directory except for run_fuzzer.sh**.
@@ -19,4 +24,10 @@ You must supply a folder with at least a DockerFile that describes how to build/
 
 See the assignment spec for more details.
 
+# Notes
 
+This branch uses python 3.14 with Cython
+
+## Google doc notes
+
+<https://docs.google.com/document/d/1kjka3ijjtv6MdvxuVZKznp9sHsXN9ch6YZrAvmUkMf8/edit?tab=t.0>
