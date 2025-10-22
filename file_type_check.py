@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+import sys
+import json
+import csv
+import os
+import xml.etree.ElementTree as ET
+
+
 """
 file_type_check.py
 ---------------------
@@ -8,35 +16,15 @@ return 'unknown'.
 This code does NOT rely on filename extensions.
 
 Strategy:
-  1) Try to decode as UTF-8 (tolerant; ignores errors) and strip BOM.
-  2) Quick "text-likeness" check to reject obviously-binary blobs.
-  3) JSON: attempt json.loads() on the (trimmed) text.
-  4) CSV: use csv.Sniffer on a sample + basic column consistency checks.
-
-Returns: (type_hint, confidence)
-  type_hint ∈ {'json', 'csv', 'unknown'}
-  confidence ∈ [0..100]
+  1) Use magic bytes to identify input file types accorrding to assignment
+  2) JSON: attempt json.loads() on the (trimmed) text.
+  3) XML: use xml to parse and if an xml file
+  4) CSV: use csv.Sniffer on a sample + basic column consistency checks and herusitic
+  5) Else is just a text
 """
 
-from __future__ import annotations
-import sys
-import json
-import csv
-import os
-from typing import Tuple
-
-# How much to sample for sniffing (large enough for structure, small for speed)
+# TODO: Check if this sample size is okay
 SAMPLE_BYTES = 128 * 1024  # 128 KiB
-
-'''
-def _decode_utf8_lossy(data: bytes) -> str:
-    """Decode as UTF-8, ignoring errors; strip UTF-8 BOM if present."""
-    # DEPRECATED: TOOD: CHECK 
-    s = data.decode("utf-8", errors="ignore")
-    if s.startswith("\ufeff"):
-        s = s.lstrip("\ufeff")
-    return s
-'''
 
 
 def _is_json(text: str) -> bool:
@@ -105,6 +93,75 @@ def _is_csv(text: str) -> bool:
     return True
 
 
+def _is_jpg(data: bytes) -> bool:
+    """
+    Check if the given data is a JPEG file by looking for the JPEG magic numbers.
+
+    Args:
+        data: The byte data to check.
+    Preconditions:
+        JPG file is at least 12 bytes
+    """
+    # https://en.wikipedia.org/wiki/List_of_file_signatures
+
+    # JPEG files start with FF D8 FF and can end with several...
+    # Only 4 types!
+    start = data[:12]
+    if start[0:4] == b"\xff\xd8\xff\xee":
+        return True
+    elif start[0:4] == b"\xff\xd8\xff\xe0":
+        return True
+    elif start[0:4] == b"\xff\xd8\xff\xdb":
+        return True
+    elif start == b"\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01":
+        return True
+    return False
+
+
+def _is_elf(data: bytes) -> bool:
+    """
+    Check if data is a ELF file by looking for the ELF magic number.
+
+    Args:
+        data: The byte data to check.
+    Preconditions:
+        ELF file is at least 4 bytes
+    """
+    start = data[:4]
+    return start == b"\x7fELF"
+
+
+def _is_pdf(data: bytes) -> bool:
+    """
+    Check if data a PDF file by looking for the PDF magic number.
+
+    Args:
+        data: The byte data to check.
+    Preconditions:
+        PDF file is at least 5 bytes
+    """
+    start = data[:5]
+    return start == b"%PDF-"
+
+
+# WARNING TODO: XML file appears to be HTML. IS THIS OKAY?
+def _is_xml(data: str) -> bool:
+    """
+    Check if data a XML file by using lxml parse
+    Args:
+        data: The byte data to check.
+    Postcondition:
+        return a boolean if xml or not
+    """
+    try:
+        ET.fromstring(data)
+    except Exception as err:
+        print(f"File most likely not XML!")
+        print(f"XML parser error: {err}")
+        return False
+    return True
+
+
 def detect_input_file_type(binary_file_path: str, input_file_path: str) -> str:
     """
     Args:
@@ -120,26 +177,35 @@ def detect_input_file_type(binary_file_path: str, input_file_path: str) -> str:
             f.seek(0, os.SEEK_END)
             file_size = f.tell()
             # NOTE: CHECK decoding format here
-            blob = blob.decode("utf-8")
+            blob_str = blob.decode("utf-8")
     except OSError as e:
         print(f"Error reading input file: {e}", file=sys.stderr)
         sys.exit(2)
     # DO NOT READ IN PARTS OF THE FILE OTHERWISE PARSER NO WORK
-    # TODO: CHECK IF WE NEED IF INPUT FILE SIZE IS PROBLEM, ASK LECTURER
+    # TODO: CHECK IF WE NEED IF INPUT FILE SIZE CAN BE BIG
+    # IS PROBLEM, ASK LECTURER
     # PREFORM MAGIC BYTE CHECKING HERE.
 
-    if _is_json(blob):
+    if _is_elf(blob):
+        return "elf"
+    elif _is_jpg(blob):
+        return "jpg"
+    elif _is_pdf(blob):
+        return "pdf"
+    elif _is_xml(blob_str):
+        return "xml"
+    elif _is_json(blob_str):
         return "json"
-
-    # Then CSV (looser, but with structural checks)
-    elif _is_csv(blob):
+    # CSV has structural checks and heuristic
+    elif _is_csv(blob_str):
         return "csv"
-
     # TODO: CHECK OTHER FILE TYPES LATE
     else:
         return "txt"
 
 
+# If binary accepts particular file... Then of course it should
+# Read meta data and magic num for checking
 # TODO: Test code
 # --- CLI usage for convenience ---
 if __name__ == "__main__":
@@ -147,6 +213,7 @@ if __name__ == "__main__":
     DEFAULT_BINARY = "binaries/challenge1"
     DEFAULT_INPUT = "example_inputs/csv1.txt"
     DEFAULT_INPUT = "example_inputs/json1.txt"
+    DEFAULT_INPUT = "example_inputs/xml1.txt"
 
     res = detect_input_file_type(DEFAULT_BINARY, DEFAULT_INPUT)
-    print(res)
+    print(f"File is most likely: {res}")
