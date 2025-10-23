@@ -1,9 +1,12 @@
 version: '3'
 services:
   awesome_fuzzer:
-    image: fuzzer 
+    build:
+      context: .
+      dockerfile: Dockerfile
+
     volumes:
-      - ./binaries:/binaries
-      - ./example_inputs:/example_inputs
-      - ./fuzzer_output:/fuzzer_output
+      - ./binaries:/app/binaries
+      - ./example_inputs:/app/example_inputs
+      - ./fuzzer_output:/app/fuzzer_output
 
