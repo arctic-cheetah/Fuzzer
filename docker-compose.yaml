@@ -1,11 +1,14 @@
+version: "3.8"
+
 services:
-  awesome_fuzzer:
-    build:
-      context: .
-      dockerfile: Dockerfile
-
+  fuzzer:
+    build: .
+    tty: true
     volumes:
-      - ./binaries:/app/binaries
-      - ./example_inputs:/app/example_inputs
+      - ./binaries:/app/binaries:ro
+      - ./example_inputs:/app/example_inputs:ro
       - ./fuzzer_output:/app/fuzzer_output
-
+    environment:
+      - FUZZER_BIN_DIR=/app/binaries
+      - FUZZER_SEED_DIR=/app/example_inputs
+      - FUZZER_OUT_DIR=/app/fuzzer_output
