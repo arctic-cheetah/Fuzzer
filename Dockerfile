@@ -3,8 +3,11 @@ FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 # Copy/Compile my fuzzer
 # COPY fuzzer /
-# Make Python stdout unbuffered and avoid creating .pyc files
+# Make Python stdout unbuffered # avoid creating .pyc files
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+# make UV create bytecode (more disk space for a perf gain)
+ENV UV_COMPILE_BYTECODE=1
 
 # Create necessary directories
 RUN mkdir -p /app/src /app/binaries /app/fuzzer_input /app/fuzzer_output
