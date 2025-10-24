@@ -121,7 +121,6 @@ def _is_jpg(data: bytes) -> bool:
 def _is_elf(data: bytes) -> bool:
     """
     Check if data is a ELF file by looking for the ELF magic number.
-
     Args:
         data: The byte data to check.
     Preconditions:
