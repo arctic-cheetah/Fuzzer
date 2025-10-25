@@ -34,12 +34,12 @@ typedef struct
 
 // TODO: SHOULD THIS PATH BE STATIC?
 // TODO; CHECK IF SHM PATH IS CORRECT
-static const char *SHM_PATH = "/comp6447_shared";
+static const char *SHM_PATH = "/comp6447_fuzzer_shm";
 
 int init_shared_memory();
 
 // Harness to execute test casesq
-int main()
+int main(int argc, int *argv[])
 {
     const size_t SHM_SIZE = sizeof(shm_t);
     printf("%s\n", SHM_PATH);
@@ -58,6 +58,7 @@ int main()
     shm_ptr->process_flag = 0;
     shm_ptr->return_code_flag = 0;
     shm_ptr->exec_id = 0;
+    memset(&shm_ptr->input, 0xFF, MAX_DATA_LEN);
 
     // 5) Make process_flag and return_code_flag atomic C++ 20 compliant
     auto *process_flag = reinterpret_cast<std::atomic<uint32_t> *>(&shm_ptr->process_flag);
