@@ -15,7 +15,7 @@ typedef struct
     uint8_t bitmap[BIT_MAP_LEN]; // Bitmap represents code coverage (need to set to zero)
     uint8_t input[MAX_DATA_LEN]; // input data
 } shm_t;
-
+// Harness to execute test cases
 int main()
 {
     printf("Hello, World!\n");
