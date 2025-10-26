@@ -16,6 +16,7 @@ this is the entry point of the fuzzer, i.e. the scheduler.
 # i.e. For /binaries/xml2 your fuzzer should create /fuzzer_output/bad_xml2.txt.
 # Note: Your fuzzer will have 60 seconds per challenge (on average). If there are 10 binaries, you fuzzer will be stopped after 600 seconds (10 minutes)
 
+from pathlib import Path
 import struct
 from time import sleep
 import file_type
@@ -25,7 +26,10 @@ import subprocess
 import mmap
 import shared_memory
 
-PATH_TO_HARNESS = "src/harness/harness"
+PATH_TO_HARNESS = PROGRAM_PATH = (
+    (Path(__file__).parent / "harness/harness").resolve().__str__()
+)
+
 
 file_type.run_challenge1_against_examples()
 
@@ -35,6 +39,8 @@ def main():
     seed_dir_path = os.getenv("FUZZER_SEED_DIR", "Not Set")
     out_dir_path = os.getenv("FUZZER_OUT_DIR", "Not Set")
     # 1) Fork the harness so the shm is set
+    # print(f"Starting harness at {PATH_TO_HARNESS}")
+
     # Env is not really neeeded
     env = os.environ.copy()
     env["SHM_NAME"] = shared_memory.SHM_NAME
@@ -55,6 +61,8 @@ def main():
     print(f"Return_code_flag: {shm.return_code_flag}")
     print(f"Bitmap: {shm.bitmap}")
     print(f"Input: {shm.input}")
+
+    # 3) Mutation
     # input_len = struct.unpack_from("I", shm, 0)
     # process_flag = struct.unpack_from("I", shm, 4)
     # return_code_flag = struct.unpack_from("I", shm, 8)

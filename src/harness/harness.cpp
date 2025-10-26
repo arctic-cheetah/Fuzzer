@@ -11,6 +11,7 @@
 #include <iostream>
 #include "harness.h"
 #include <errno.h>
+#include <qemu-plugin.h>
 
 #define MAX_DATA_LEN (1 << 20) // 1MB
 #define BIT_MAP_LEN (1 << 16)  // 64KB
@@ -39,7 +40,7 @@ static const char *SHM_PATH = "/comp6447_fuzzer_shm";
 int init_shared_memory();
 
 // Harness to execute test casesq
-int main(int argc, int *argv[])
+int main(int argc, char *argv[])
 {
     const size_t SHM_SIZE = sizeof(shm_t);
     printf("%s\n", SHM_PATH);
@@ -54,7 +55,7 @@ int main(int argc, int *argv[])
     // 4) Initialise shm once
     // TODO: Check error checking here!
     memset(shm_ptr, 0, SHM_SIZE);
-    shm_ptr->input_len = 0;
+    shm_ptr->input_len = 1;
     shm_ptr->process_flag = 0;
     shm_ptr->return_code_flag = 0;
     shm_ptr->exec_id = 0;

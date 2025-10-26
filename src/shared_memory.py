@@ -6,6 +6,7 @@ MAX_DATA_LEN = 1 << 20  # 1 MB
 BIT_MAP_LEN = 1 << 16  # 64 KB
 
 
+# https://docs.python.org/3/library/multiprocessing.shared_memory.html
 class SharedMemoryStruct(C.Structure):
     _fields_ = [
         ("input_len", C.c_uint32),
