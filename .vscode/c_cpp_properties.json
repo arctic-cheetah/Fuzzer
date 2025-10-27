@@ -1,0 +1,32 @@
+{
+  "configurations": [
+    {
+      "name": "Win32",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "C:/MinGW/include",
+        "C:/MinGW/lib/gcc/mingw32/6.3.0/include" 
+      ],
+      "compilerPath": "C:/MinGW/bin/gcc.exe",
+      "intelliSenseMode": "gcc-x86",
+      "cStandard": "c11",
+      "cppStandard": "c++17"
+    }
+    ,
+    {
+      "name": "Linux",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "/usr/include",
+        "/usr/local/include",
+        "/home/otter/qemu-7.2.19/include",
+        "/home/otter/qemu-7.2.19/build/include"
+      ],
+      "compilerPath": "/usr/bin/g++",
+      "intelliSenseMode": "gcc-x64",
+      "cStandard": "c11",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}
