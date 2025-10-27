@@ -1,4 +1,4 @@
-// qcov_plugin.c - QEMU TCG plugin: write AFL-style edge coverage to shared memory
+// qcov_plugin.c - QEMU TCG plugin: AFL-style edge coverage to shared memory
 
 #define _GNU_SOURCE
 #include <qemu-plugin.h> // QEMU's plugin API (TB/instruction callbacks, etc.)
