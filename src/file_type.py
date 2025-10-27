@@ -25,8 +25,8 @@ def show(s: str) -> None:
 
 
 def run_challenge1_against_examples(
-    inputs_dir: Path | str = "../example_inputs",
-    binary_path: Path | str = "../binaries/challenge1",
+    inputs_dir: Path | str = "example_inputs",
+    binary_path: Path | str = "binaries/challenge1",
     timeout_seconds: float = 2.0,
     use_stdin: bool = True,
 ) -> List[Dict[str, object]]:
