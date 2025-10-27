@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.git/
+.vscode/
+.idea/
+fuzzer_output/

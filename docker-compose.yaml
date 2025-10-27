@@ -1,9 +1,13 @@
-version: '3'
+# version 3.8, version tag is depreciated
 services:
-  awesome_fuzzer:
-    image: fuzzer 
+  fuzzer:
+    build: .
+    tty: true
     volumes:
-      - ./binaries:/binaries
-      - ./example_inputs:/example_inputs
-      - ./fuzzer_output:/fuzzer_output
-
+      - ./binaries:/app/binaries:ro
+      - ./example_inputs:/app/example_inputs:ro
+      - ./fuzzer_output:/app/fuzzer_output
+    environment:
+      - FUZZER_BIN_DIR=/app/binaries
+      - FUZZER_SEED_DIR=/app/example_inputs
+      - FUZZER_OUT_DIR=/app/fuzzer_output
