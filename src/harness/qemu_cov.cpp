@@ -73,6 +73,8 @@ int qemu_plugin_install(qemu_plugin_id_t id, const qemu_info_t *info, int argc, 
     //   argv[0] : shm name (e.g., "/comp6447_cov")
     //   argv[1] : optional "off=<bytes>"  (offset into SHM where bitmap lives)
     //   argv[2] : optional "len=<bytes>"  (bitmap length; default 65536)
+
+    // TODO: Dont hardcode this, just make it shared across all function
     const char *SHM_PATH = "/comp6447_fuzzer_shm";
     size_t off = 0;
 
