@@ -31,9 +31,6 @@ PATH_TO_HARNESS = PROGRAM_PATH = (
 )
 
 
-file_type.run_challenge1_against_examples()
-
-
 def main():
     bin_dir_path = os.getenv("FUZZER_BIN_DIR", "Not Set")
     seed_dir_path = os.getenv("FUZZER_SEED_DIR", "Not Set")
@@ -53,6 +50,7 @@ def main():
     # 2) Read from shm
     fd = os.open(shared_memory.SHM_PATH, os.O_RDWR)
     mm = mmap.mmap(fd, shared_memory.SHM_SIZE)
+    print(os.getcwd())
 
     shm = shared_memory.SharedMemoryStruct.from_buffer(mm)
 
@@ -67,8 +65,16 @@ def main():
     # process_flag = struct.unpack_from("I", shm, 4)
     # return_code_flag = struct.unpack_from("I", shm, 8)
     # bitmap =
+    example_inputs = (
+        (Path(__file__).parent.parent.parent / "example_inputs").resolve().__str__()
+    )
+    binary_path = (
+        (Path(__file__).parent.parent.parent / "binaries/challenge1")
+        .resolve()
+        .__str__()
+    )
 
-    print("Hello from src!")
+    file_type.run_challenge1_against_examples(example_inputs, binary_path)
 
 
 if __name__ == "__main__":
