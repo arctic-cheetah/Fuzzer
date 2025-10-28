@@ -70,6 +70,11 @@ COPY src/ /app/src/
 COPY example_inputs /app/example_inputs
 COPY binaries /app/binaries
 
+# Copy into / as required by assignment
+COPY example_inputs /example_inputs
+COPY binaries /binaries
+RUN mkdir /fuzzer_output
+
 
 # Compile it
 # Build harness
