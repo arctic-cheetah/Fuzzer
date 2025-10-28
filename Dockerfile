@@ -64,9 +64,11 @@ WORKDIR /app/src
 COPY src/pyproject.toml src/uv.lock ./
 RUN uv sync --locked
 
-# Copy the actual source code (changing code won’t invalidate the dependency layer)
+# Copy the actual source code and example files
 # COPY src/ ./ <= Who the FUCK WROTE THIS SHIT RELATIVE PATH MOTHER FUCKER ILL KILL YOU
 COPY src/ /app/src/
+COPY example_inputs /app/example_inputs
+COPY binaries /app/binaries
 
 
 # Compile it
