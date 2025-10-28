@@ -152,8 +152,8 @@ class fileTypeCheck:
         try:
             ET.fromstring(data)
         except Exception as err:
-            print(f"File most likely not XML!")
-            print(f"XML parser error: {err}")
+            # print(f"File most likely not XML!")
+            # print(f"XML parser error: {err}")
             return False
         return True
 

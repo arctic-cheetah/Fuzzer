@@ -17,6 +17,7 @@ this is the entry point of the fuzzer, i.e. the scheduler.
 # Note: Your fuzzer will have 60 seconds per challenge (on average). If there are 10 binaries, you fuzzer will be stopped after 600 seconds (10 minutes)
 
 from pathlib import Path
+from globals import PATH_TO_HARNESS, mount_point
 import struct
 from time import sleep
 from file_type_check import fileTypeCheck
@@ -27,19 +28,14 @@ import subprocess
 import mmap
 import shared_memory
 
-PATH_TO_HARNESS = PROGRAM_PATH = (
-    (Path(__file__).parent / "harness/harness").resolve().__str__()
-)
-
 
 def main():
     # 1) Fork the harness so the shm is set
     # print(f"Starting harness at {PATH_TO_HARNESS}")
     # TODO: refactor input to generalise later:
-    example_inputs = (
-        (Path(__file__).parent.parent.parent / "example_inputs").resolve().__str__()
-    )
-    binary_path = (Path(__file__).parent.parent.parent / "binaries").resolve().__str__()
+    # GET_progname
+    example_inputs = mount_point("example_inputs")
+    binary_path = mount_point("binaries")
 
     # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
     input_arr = [example_inputs + "/csv1.txt", example_inputs + "/json1.txt"]
@@ -81,9 +77,9 @@ def main():
         binary_path = bin_arr[x]
         # TODO: CALL FUZZER HERE
         file_type = check_file_type.detect_input_file_type(in_data)
-        print(file_type)
+        print(f"Discovered input type is: {file_type}")
         fuzzer = Fuzzer.FuzzerFactory(file_type, in_data, binary_path)
-        fuzzer.mutate()
+        fuzzer.run_binary()
 
     # input_len = struct.unpack_from("I", shm, 0)
     # process_flag = struct.unpack_from("I", shm, 4)

@@ -1,6 +1,13 @@
 import random
 import subprocess
 import os
+from typing import List, Callable
+import re
+from globals import mount_point
+
+
+NUM_TO_RUN = 50_000
+TIMEOUT = 1
 
 
 def b_insert(b: bytes, payload: bytes) -> bytes:
@@ -14,64 +21,69 @@ def random_bytes(size: int) -> bytes:
     return os.urandom(size)
 
 
-def is_crash(proc) -> bool:
+def is_crash(proc, timeout) -> bool:
     """
     Crash definition:
     - timed out => treat as crash/hang
     - returncode < 0 => terminated by signal => crash
     """
-    result = {
-        "exit_code": proc.rc,
-        "signal": proc.signal,
-        # "timed_out": False,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
-        "crashed": proc.rc < 0,
-    }
-    # if timed_out:
-    #     return True
-    print(result)
+    if timeout:
+        return True
     if hasattr(proc, "returncode"):
         rc = proc.returncode
         if rc is None:
-            print(result)
+            return True
         if rc < 0:
-            print("No crash")
+            return True
     return False
 
 
 class Fuzzer:
-    mutators = []
-    path_to_input = ""
-    path_binary = ""
+    mutators: List[Callable] = []
+    path_to_input: str = ""
+    binary_path: str = ""
+    binary_name: str = ""
 
-    def __init__(self, path_to_input: str, path_binary: str):
+    @staticmethod
+    def FuzzerFactory(file_type: str, path_to_input: str, binary_path: str):
+        if file_type == "json":
+            return JSON_Mutational_Fuzzer(path_to_input, binary_path)
+        elif file_type == "csv":
+            return CSV_Mutational_Fuzzer(path_to_input, binary_path)
+        else:
+            raise Exception("TODO TXT HERE")
+        # TODO: DO THE TEXT HERE!
+
+    def __init__(self, path_to_input: str, binary_path: str):
         self.path_to_input = path_to_input
-        self.path_binary = path_binary
-
+        self.binary_path = binary_path
+        self.binary_name = re.search(r"(\w+)$", self.binary_path)[0]
         self.mutators = [
             # add more as we make strategies
         ]
 
-    def mutate(self):
+    def run_binary(self):
         # Apply 1-4 random mutators in random order.
-        data = b""
+        seed = b""
         with open(self.path_to_input, mode="rb") as f:
-            data = f.read()
+            seed = f.read()
 
-        for x in range(0, 1000):
-            fn = random.choice(self.mutators)
+        for x in range(0, NUM_TO_RUN):
+
             try:
-                data = fn(data)
+                # chain mutater here!
+                data = self.mutate(seed)
+                # ---------------
                 proc = subprocess.run(
-                    self.path_binary,
+                    [self.binary_path],
                     input=data,
                     capture_output=True,
-                    timeout=1000,
+                    timeout=TIMEOUT,
                     check=False,
                 )
 
                 rc = proc.returncode
+                # print(proc.returncode)
                 crashed = rc < 0
                 signal = -rc if rc < 0 else None
                 result = {
@@ -84,26 +96,61 @@ class Fuzzer:
                     "crashed": crashed,
                 }
                 if crashed:
+                    print(f"________________________________")
                     print(f"Crashed at the {x} input")
-                    print(result)
+                    print(f"Information: {result}")
+                    self.log_crash(data)
+                    print(f"________________________________")
+                    return
+
                 if (x % 50) == 0:
-                    print(f"Input now is: {x}")
-                # is_crash(proc)
+                    print(f"Tried {x} inputs")
+
+            except subprocess.TimeoutExpired as e:
+                result = {
+                    "input_file": str(self.path_to_input),
+                    "exit_code": None,
+                    "signal": None,
+                    "timed_out": True,
+                    "stdout": e.stdout or b"",
+                    "stderr": e.stderr or b"",
+                    "crashed": False,
+                }
+
+                print(f"________________________________")
+                print(f"Crashed at the {x} input")
+                print(f"Information: {result}")
+                print(f"________________________________")
+
             except Exception as err:
                 print(err)
                 # TODO: CHECK SYS CALL HERE ERROR
                 # ignore mutator failures and continue
                 pass
 
-    @staticmethod
-    def FuzzerFactory(file_type: str, path_to_input: str, path_binary: str):
-        if file_type == "json":
-            return JSON_Mutational_Fuzzer(path_to_input, path_binary)
-        elif file_type == "csv":
-            return CSV_Mutational_Fuzzer(path_to_input, path_binary)
-        else:
-            raise Exception("TODO TXT HERE")
-        # TODO: DO THE TEXT HERE!
+    def log_crash(self, data: bytes):
+        with open(
+            mount_point(f"fuzzer_outputs/bad_{self.binary_name}.txt"),
+            "w+",
+            encoding="latin-1",
+        ) as f:
+            f.write(data.decode("latin-1"))
+
+    # def run_binary(self, data: bytes):
+    #     try:
+    #         p = subprocess.run([self.binary_path], data,capture_output=True,timeout=1000,check=False,)
+    #     except subprocess.TimeoutExpired as e:
+
+    def mutate(self, data: bytes):
+        # Chain 1 to 6 random mutators:
+        for _ in range(1, random.randint(1, 6)):
+            func = random.choice(self.mutators)
+            try:
+                data = func(data)
+            except Exception:
+                print(f"Mutator failed {func}")
+                return b""
+        return data
 
     # def replace_rand_str(self):
     #     pass
@@ -127,8 +174,8 @@ class Fuzzer:
 
 class JSON_Mutational_Fuzzer(Fuzzer):
 
-    def __init__(self, path_to_input: str, path_binary: str):
-        super().__init__(path_to_input, path_binary)
+    def __init__(self, path_to_input: str, binary_path: str):
+        super().__init__(path_to_input, binary_path)
 
         self.mutators = [
             self.long_string,
@@ -147,8 +194,8 @@ class JSON_Mutational_Fuzzer(Fuzzer):
         ]
         self.path_to_input = path_to_input
 
-    def mutate(self):
-        super().mutate()
+    def run_binary(self):
+        super().run_binary()
 
     def long_string(self, b):
         """Insert a very long string value (may stress length and allocation)."""
@@ -272,8 +319,8 @@ class JSON_Mutational_Fuzzer(Fuzzer):
 
 class CSV_Mutational_Fuzzer(Fuzzer):
 
-    def __init__(self, path_to_input: str, path_binary: str):
-        super().__init__(path_to_input, path_binary)
+    def __init__(self, path_to_input: str, binary_path: str):
+        super().__init__(path_to_input, binary_path)
 
         self.mutators = [
             self.overwrite_chunk,
@@ -288,8 +335,8 @@ class CSV_Mutational_Fuzzer(Fuzzer):
         ]
         self.path_to_input = path_to_input
 
-    def mutate(self):
-        super().mutate()
+    def run_binary(self):
+        super().run_binary()
 
     def overwrite_chunk(self, b):
         a = bytearray(b)
@@ -366,7 +413,7 @@ class CSV_Mutational_Fuzzer(Fuzzer):
         return bytes(a[:pos] + seq + a[pos:])
 
     def random_byte_mutation(self, b):
-        # Mutate a number of random bytes in the buffer.
+        # run_binary a number of random bytes in the buffer.
         a = bytearray(b)
         n = max(1, len(a) // 20)
         for _ in range(random.randint(1, n)):

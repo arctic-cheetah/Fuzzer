@@ -76,7 +76,7 @@ def run_challenge1_against_examples(
         try:
             proc = subprocess.run(
                 args,
-                input=data if use_stdin else None,
+                input=data,
                 capture_output=True,
                 timeout=timeout_seconds,
                 check=False,
