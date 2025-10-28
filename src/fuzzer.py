@@ -86,7 +86,8 @@ class Fuzzer:
                 print(result)
 
                 # is_crash(proc)
-            except Exception:
+            except Exception as err:
+                print(err)
                 # TODO: CHECK SYS CALL HERE ERROR
                 # ignore mutator failures and continue
                 pass
