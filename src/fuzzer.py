@@ -71,6 +71,7 @@ class Fuzzer:
         for x in range(0, NUM_TO_RUN):
 
             try:
+                # TODO: MAKE MUTATER SMART HERE
                 # chain mutater here!
                 data = self.mutate(seed)
                 # ---------------
@@ -130,7 +131,7 @@ class Fuzzer:
 
     def log_crash(self, data: bytes):
         with open(
-            mount_point(f"fuzzer_outputs/bad_{self.binary_name}.txt"),
+            mount_point(f"fuzzer_output/bad_{self.binary_name}.txt"),
             "w+",
             encoding="latin-1",
         ) as f:
