@@ -70,11 +70,25 @@ class Fuzzer:
                     timeout=1000,
                     check=False,
                 )
-                is_crash(proc)
+
+                rc = proc.returncode
+                crashed = rc < 0
+                signal = -rc if rc < 0 else None
+                result = {
+                    "input_file": str(self.path_to_input),
+                    "exit_code": rc,
+                    "signal": signal,
+                    "timed_out": False,
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                    "crashed": crashed,
+                }
+                print(result)
+
+                # is_crash(proc)
             except Exception:
                 # TODO: CHECK SYS CALL HERE ERROR
                 # ignore mutator failures and continue
-                print("Timed out or err")
                 pass
 
     @staticmethod
@@ -130,7 +144,7 @@ class JSON_Mutational_Fuzzer(Fuzzer):
         self.path_to_input = path_to_input
 
     def mutate(self):
-        super().mutate
+        super().mutate()
 
     def long_string(self, b):
         """Insert a very long string value (may stress length and allocation)."""
@@ -271,7 +285,7 @@ class CSV_Mutational_Fuzzer(Fuzzer):
         self.path_to_input = path_to_input
 
     def mutate(self):
-        super().mutate
+        super().mutate()
 
     def overwrite_chunk(self, b):
         a = bytearray(b)

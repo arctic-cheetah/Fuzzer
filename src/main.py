@@ -82,6 +82,7 @@ def main():
         binary_path = bin_arr[x]
         # TODO: CALL FUZZER HERE
         file_type = check_file_type.detect_input_file_type(in_data)
+        print(file_type)
         fuzzer = Fuzzer.FuzzerFactory(file_type, in_data, binary_path)
         fuzzer.mutate()
 
