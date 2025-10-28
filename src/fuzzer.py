@@ -86,7 +86,7 @@ class Fuzzer:
                 if crashed:
                     print(f"Crashed at the {x} input")
                     print(result)
-                if (x % 200) == 0:
+                if (x % 50) == 0:
                     print(f"Input now is: {x}")
                 # is_crash(proc)
             except Exception as err:
