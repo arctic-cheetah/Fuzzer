@@ -59,7 +59,7 @@ class Fuzzer:
         with open(self.path_to_input, mode="rb") as f:
             data = f.read()
 
-        for _ in range(0, len(self.mutators)):
+        for x in range(0, 1000):
             fn = random.choice(self.mutators)
             try:
                 data = fn(data)
@@ -83,8 +83,11 @@ class Fuzzer:
                     "stderr": proc.stderr,
                     "crashed": crashed,
                 }
-                print(result)
-
+                if crashed:
+                    print(f"Crashed at the {x} input")
+                    print(result)
+                if (x % 200) == 0:
+                    print(f"Input now is: {x}")
                 # is_crash(proc)
             except Exception as err:
                 print(err)

@@ -39,15 +39,14 @@ def main():
     example_inputs = (
         (Path(__file__).parent.parent.parent / "example_inputs").resolve().__str__()
     )
-    binary_path = (
-        (Path(__file__).parent.parent.parent / "binaries/challenge1")
-        .resolve()
-        .__str__()
-    )
+    binary_path = (Path(__file__).parent.parent.parent / "binaries").resolve().__str__()
 
     # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
-    input_arr = [example_inputs + "/json1.txt", example_inputs + "/csv1.txt"]
-    bin_arr = [binary_path + "/json1", binary_path + "/csv1"]
+    input_arr = [example_inputs + "/csv1.txt", example_inputs + "/json1.txt"]
+    bin_arr = [
+        binary_path + "/csv1",
+        binary_path + "/json1",
+    ]
     test_arr = [input_arr, bin_arr]
 
     # Env is not really neeeded
