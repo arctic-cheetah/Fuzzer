@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <cstdint>
+#include <stdint.h>
 #include <atomic>
+#include <map>
 #include <string.h>
 #include <fcntl.h>
 #include <iostream>
@@ -11,7 +12,15 @@
 #include <iostream>
 #include "harness.h"
 #include <errno.h>
+#include <sys/wait.h>
+#include <sys/user.h>
+#include <print>
+
+#if USE_QEMU
 #include <qemu-plugin.h>
+#else
+#include <sys/ptrace.h>
+#endif
 
 #define MAX_DATA_LEN (1 << 20) // 1MB
 #define BIT_MAP_LEN (1 << 16)  // 64KB
@@ -39,70 +48,96 @@ static const char *SHM_PATH = "/comp6447_fuzzer_shm";
 
 int init_shared_memory();
 
-// Harness to execute test casesq
-int main(int argc, char *argv[])
-{
-    const size_t SHM_SIZE = sizeof(shm_t);
-    printf("%s\n", SHM_PATH);
-    // 1)Create or open the SHM
-    int shm_fd = shm_open(SHM_PATH, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    // Error checking
-    shm_error_check(shm_fd, SHM_SIZE);
+std::map<std::string, uint64_t> get_registers(pid_t pid) {
+    auto regs = user_regs_struct{};
+    ptrace(PTRACE_GETREGS, pid, nullptr, &regs);
 
-    // 3) Get a typed view of the SHM
-    shm_t *shm_ptr = (shm_t *)mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-
-    // 4) Initialise shm once
-    // TODO: Check error checking here!
-    memset(shm_ptr, 0, SHM_SIZE);
-    shm_ptr->input_len = 1;
-    shm_ptr->process_flag = 0;
-    shm_ptr->return_code_flag = 0;
-    shm_ptr->exec_id = 0;
-    memset(&shm_ptr->input, 0xFF, MAX_DATA_LEN);
-
-    // 5) Make process_flag and return_code_flag atomic C++ 20 compliant
-    auto *process_flag = reinterpret_cast<std::atomic<uint32_t> *>(&shm_ptr->process_flag);
-    auto *return_code_flag = reinterpret_cast<std::atomic<uint32_t> *>(&shm_ptr->return_code_flag);
-
-    // 6) Read from objdump the code regions to obtain disassembly code
-
-    // 8)Event loop here to do tasks!
-    std::cout << "Harness is running!\n"
-              << std::endl;
-    while (true)
-    {
-        // Wait for the fuzzer to write input and set process_flag
-        while (process_flag->load() != 1 && process_flag->load() != 4)
-            ;
-
-        // Exit program
-        if (process_flag->load() == 4)
-            break;
-
-        std::cout << "New input obtained from fuzzer!\n";
-        // 9) TODO: Execute the provided binary! via QEMU
-
-        process_flag->store(0); // Send new coverage
-    }
-    // TODO: When to close fd? When we send data to the fuzzer
-    close(shm_fd);
-    // remove SHM_PATH
-    shm_unlink(SHM_PATH);
-    return 0;
+    return {
+        {"rax", regs.rax}, {"rbx", regs.rbx}, {"rcx", regs.rcx},
+        {"rdx", regs.rdx}, {"rsi", regs.rsi}, {"rdi", regs.rdi},
+        {"rbp", regs.rbp}, {"rsp", regs.rsp}, {"rip", regs.rip},
+        {"r8", regs.r8}, {"r9", regs.r9}, {"r10", regs.r10},
+        {"r11", regs.r11}, {"r12", regs.r12}, {"r13", regs.r13},
+        {"r14", regs.r14}, {"r15", regs.r15}
+    };
 }
 
-void shm_error_check(int shm_fd, const size_t SHM_SIZE)
-{
-    if (shm_fd == -1)
-    {
-        fprintf(stderr, "shm_open failed: %s\n", strerror(errno));
+void execute_task_ptrace(std::string binary){
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
         exit(EXIT_FAILURE);
     }
-    // 2) Set the size of the SHM
-    if (ftruncate(shm_fd, SHM_SIZE) == -1)
-    {
-        perror("SHM truncate and setting file size failed!\n");
+
+    if (pid == 0) {
+        // replace stdout with /dev/null for now
+        close(STDOUT_FILENO);
+        int dev_null = open("/dev/null", O_WRONLY);
+        if (dev_null == -1) {
+            perror("open /dev/null");
+            exit(EXIT_FAILURE);
+        }
+
+        dup2(dev_null, STDOUT_FILENO);
+        close(dev_null);
+
+        if (ptrace(PTRACE_TRACEME, 0, nullptr, nullptr) < 0) {
+            perror("ptrace TRACEME");
+            exit(EXIT_FAILURE);
+        }
+
+        // Execute the binary with input data
+        execl(binary.c_str(), binary.c_str(), nullptr);
+        perror("execl");
         exit(EXIT_FAILURE);
+    } else {
+        ptrace(PTRACE_ATTACH, pid, nullptr, nullptr);
+
+        int status;
+        int signal = 0;
+        std::map<std::string, uint64_t> registers;
+
+        while (true) {
+            waitpid(pid, &status, 0);
+            if (WIFEXITED(status)) {
+                break; // Child has exited
+            }
+
+            if (WIFSTOPPED(status)) {
+                int sig = WSTOPSIG(status);
+                if (sig != SIGTRAP) {
+                    if (sig == SIGSEGV || sig == SIGABRT || sig == SIGFPE) {
+                        std::print(std::cerr, "Crashed with signal: {}\n", strsignal(sig));
+
+                        signal = sig;
+                        registers = get_registers(pid);
+                    }
+                }
+
+                ptrace(PTRACE_CONT, pid, nullptr, sig);
+            }
+
+            ptrace(PTRACE_CONT, pid, nullptr, nullptr);
+        }
+
+        if (signal != 0) {
+            std::print(std::cerr, "Crash detected!\n");
+        std::print(R"({{ "signal": %d, "registers": {{)", signal);
+            for (const auto& [reg, value] : registers) {
+                std::print(R"("{}": {},)", reg, value);
+            }
+            std::print(R"(}}, "return_code": {} }})", WEXITSTATUS(status));
+        }
     }
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        return 1;
+    }
+
+    execute_task_ptrace(argv[1]);
+
+    return 0;
+
 }
