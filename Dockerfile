@@ -1,5 +1,5 @@
 # Start from a default ubuntu image.
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 # FROM ubuntu:24.04
 
 # Make Python stdout unbuffered # avoid creating .pyc files
@@ -77,8 +77,7 @@ RUN mkdir /fuzzer_output
 
 # Compile it
 # Build harness
-RUN g++ -std=c++17 -o /app/src/harness/harness /app/src/harness/harness.cpp
-
+RUN g++ -std=c++2b -o /app/src/harness/harness /app/src/harness/harness.cpp
 
 # Run it.
 CMD ["uv", "run", "fuzzer/main.py"]
