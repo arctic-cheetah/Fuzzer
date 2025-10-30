@@ -57,11 +57,10 @@ ENV UV_COMPILE_BYTECODE=1
 
 # Create necessary directories
 RUN mkdir -p /app/src /app/src /app/binaries /app/fuzzer_input /app/fuzzer_output
-
 WORKDIR /app/src
 
 # Copy dependency manifests first to leverage Docker layer cache
-COPY src/pyproject.toml src/uv.lock ./
+COPY src/fuzzer/pyproject.toml src/fuzzer/uv.lock ./
 RUN uv sync --locked
 
 # Copy the actual source code and example files
@@ -82,6 +81,6 @@ RUN g++ -std=c++17 -o /app/src/harness/harness /app/src/harness/harness.cpp
 
 
 # Run it.
-CMD ["uv", "run", "main.py"]
+CMD ["uv", "run", "fuzzer/main.py"]
 # CMD ["python3", "main.py"]
 
