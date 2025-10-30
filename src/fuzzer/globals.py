@@ -1,7 +1,7 @@
 from pathlib import Path
 
 PATH_TO_HARNESS = PROGRAM_PATH = (
-    (Path(__file__).parent / "harness/harness").resolve().__str__()
+    (Path(__file__).parent / "../harness/harness").resolve().__str__()
 )
 
 
