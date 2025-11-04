@@ -21,7 +21,7 @@ from globals import PATH_TO_HARNESS, mount_point
 import struct
 from time import sleep
 from file_type_check import fileTypeCheck
-from fuzzer import Fuzzer
+from fuzzerFactory import FuzzerFactory
 import os
 from multiprocessing import Pool
 import subprocess
@@ -78,7 +78,7 @@ def main():
         # TODO: CALL FUZZER HERE
         file_type = check_file_type.detect_input_file_type(in_data)
         print(f"Discovered input type is: {file_type}")
-        fuzzer = Fuzzer.FuzzerFactory(file_type, in_data, binary_path)
+        fuzzer = FuzzerFactory(file_type, in_data, binary_path)
         fuzzer.run_binary()
 
     # input_len = struct.unpack_from("I", shm, 0)

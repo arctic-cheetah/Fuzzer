@@ -1,5 +1,5 @@
 {
-    "len": 129999999999999999999999999,
-    "input": "AAAABBBBC",
-    "more_d9999999999999999999999999ata": ["a", "bb"]
+    "len": 121e9999,
+    "input": "AAAABBBBCCCC",
+    "more_data[": ["a"{"dup":1,"dup":2}, "bb"]
 }
