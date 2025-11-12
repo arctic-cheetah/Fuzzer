@@ -30,7 +30,10 @@ class Fuzzer:
 
         for x in range(NUM_TO_RUN):
             try:
-                data = self.mutate(seed)
+                if hasattr(self, "make_payload"):
+                    data = self.make_payload(seed)  # <-- deep_* 会在这条路径里被用到
+                else:
+                    data = self.mutate(seed)
                 proc = subprocess.run(
                     [self.binary_path],
                     input=data,
