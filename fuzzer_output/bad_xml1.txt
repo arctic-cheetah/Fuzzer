@@ -1,0 +1,17 @@
+<html>
+    <head>
+        <link href="%x%n%s%n%n%s%s%x%s%s%nhttp://somewebsite.com" />
+    </head>
+    <body>
+        <h1>I'm not a web developer.</h1>
+    </body>
+
+    <div id="#lol">
+        <a href="%x%n%s%n%n%s%s%x%s%s%nhttp://google.com">Here is some link...</a>
+    </div>
+
+
+    <tail>
+        <a href="%x%n%s%n%n%s%s%x%s%s%nhttp://bing.com">Footer link</a>
+    </tail>
+</html>

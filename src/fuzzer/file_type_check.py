@@ -5,6 +5,7 @@ import json
 import csv
 import os
 import xml.etree.ElementTree as ET
+import string
 
 
 # file_type_check.py
@@ -141,21 +142,34 @@ class fileTypeCheck:
         return start == b"%PDF-"
 
     # WARNING TODO: XML file appears to be HTML. IS THIS OKAY?
-    def _is_xml(self, data: str) -> bool:
-        """
-        Check if data a XML file by using lxml parse
-        Args:
-            data: The byte data to check.
-        Postcondition:
-            return a boolean if xml or not
-        """
-        try:
-            ET.fromstring(data)
-        except Exception as err:
-            # print(f"File most likely not XML!")
-            # print(f"XML parser error: {err}")
+    def _is_xml(self, text: str) -> bool:
+        t = text.lstrip()
+        if not t.startswith("<"):
             return False
-        return True
+        try:
+            ET.fromstring(text)
+            return True
+        except ET.ParseError:
+            return False
+        except Exception:
+            return False
+
+    def _is_plaintext(self, data: bytes) -> bool:
+
+        if not data:
+            return True
+        if b"\x00" in data:
+            return False
+        try:
+            s = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+
+        allowed = set(string.printable) | {"\n", "\r", "\t"}
+        printable = sum((ch in allowed) for ch in s)
+        ratio = printable / max(1, len(s))
+        return ratio >= 0.95
+
 
     def detect_input_file_type(self, input_file_path: str) -> str:
         """
@@ -194,9 +208,13 @@ class fileTypeCheck:
         # CSV has structural checks and heuristic
         elif self._is_csv(blob_str):
             return "csv"
+        elif self._is_xml(blob_str):
+            return "xml"
+        elif self._is_plaintext(blob):
+            return "plaintext"
         # TODO: CHECK OTHER FILE TYPES LATE
         else:
-            return "txt"
+            return "plaintext"
 
 
 # If binary accepts particular file... Then of course it should

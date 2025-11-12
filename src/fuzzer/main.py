@@ -38,10 +38,17 @@ def main():
     binary_path = mount_point("binaries")
 
     # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
-    input_arr = [example_inputs + "/csv1.txt", example_inputs + "/json1.txt"]
+    input_arr = [ example_inputs + "/csv1.txt",example_inputs + "/csv2.txt",example_inputs + "/json1.txt",example_inputs + "/json2.txt",example_inputs + "/xml1.txt",example_inputs + "/xml3.txt",example_inputs + "/plaintext1.txt",example_inputs + "/plaintext2.txt", example_inputs + "/plaintext3.txt"]
     bin_arr = [
         binary_path + "/csv1",
+        binary_path + "/csv2",
         binary_path + "/json1",
+        binary_path + "/json2",
+        binary_path + "/xml1",
+        binary_path + "/xml3",
+        binary_path + "/plaintext1",
+        binary_path + "/plaintext2",
+        binary_path + "/plaintext3"
     ]
     test_arr = [input_arr, bin_arr]
 
@@ -71,7 +78,7 @@ def main():
     check_file_type = fileTypeCheck()
 
     # TODO: Parallelise here later!
-    for x in range(0, len(test_arr)):
+    for x in range(0, len(bin_arr)):
 
         in_data = input_arr[x]
         binary_path = bin_arr[x]
