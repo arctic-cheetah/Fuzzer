@@ -5,12 +5,15 @@ from globals import mount_point
 NUM_TO_RUN = 50_000
 TIMEOUT = 1
 
+
 def b_insert(b: bytes, payload: bytes) -> bytes:
     pos = random.randint(0, len(b))
     return b[:pos] + payload + b[pos:]
 
+
 def random_bytes(size: int) -> bytes:
     return os.urandom(size)
+
 
 class Fuzzer:
     mutators: List[Callable] = []
@@ -25,11 +28,11 @@ class Fuzzer:
         self.mutators = []
 
     def run_binary(self):
-        with open(self.path_to_input, "rb") as f:
-            seed = f.read()
+        seed = self.new_method()
 
         for x in range(NUM_TO_RUN):
             try:
+                # REMEBER all processes read from stdin
                 if hasattr(self, "make_payload"):
                     data = self.make_payload(seed)  # <-- deep_* 会在这条路径里被用到
                 else:
@@ -63,12 +66,17 @@ class Fuzzer:
                 print(err)
                 pass
 
+    def new_method(self):
+        with open(self.path_to_input, "rb") as f:
+            seed = f.read()
+        return seed
+
     def log_crash(self, data: bytes):
         out = mount_point(f"fuzzer_output/bad_{self.binary_name}.txt")
         with open(out, "w+", encoding="latin-1") as f:
             f.write(data.decode("latin-1"))
 
-    def mutate(self, data: bytes):
+    def mutate(self, data: bytes) -> bytes:
         for _ in range(1, random.randint(1, 6)):
             func = random.choice(self.mutators)
             try:
