@@ -6,6 +6,19 @@ from pikepdf import Pdf
 import random
 import string
 
+MAX_VAL = 0xFFFF_FFFF
+VALID_PDF_VERSIONS = [
+    "1.0",
+    "1.1",
+    "1.2",
+    "1.3",
+    "1.4",
+    "1.5",
+    "1.6",
+    "1.7",
+    "2.0",
+]
+
 
 def random_latin1_string(length):
     """
@@ -73,20 +86,72 @@ class PDF_Fuzzer(Fuzzer):
 
     # Starter mutation
     # Note PDF may not have the fields we want!
-    def rand_string(self, n: int = 16):
-        pass
-
-    def m_ascii(self):
-        pass
-
     def m_doc_title(self, pdf: Pdf) -> None:
+        # Mutate ttile
         try:
-            pdf.docinfo["/Title"] = random_latin1_string(random.randint(0, 0xFFFF_FFFF))
+            pdf.docinfo["/Title"] = random_latin1_string(random.randint(0, MAX_VAL))
         except Exception:
             pass
 
     def m_doc_subject(self, pdf: Pdf) -> None:
-        pass
+        # Mutate subject
+        try:
+            pdf.docinfo["/Subject"] = random_latin1_string(random.randint(0, MAX_VAL))
+        except Exception:
+            pass
 
     def m_doc_version(self, pdf: Pdf) -> None:
-        pass
+        # Mutate pdf version
+        try:
+            pdf.pdf_version = random.choice(VALID_PDF_VERSIONS)
+        except Exception:
+            pass
+
+    def m_shuffle_pages(self, pdf: Pdf) -> None:
+        # Try shuffling the pages!
+        try:
+            pages = list(pdf.pages)
+            random.shuffle(pages)
+            # Replace page order
+            pdf.pages.clear()
+            for p in pages:
+                pdf.pages.append(p)
+        except Exception:
+            pass
+
+    def m_rotate_page(self, pdf: Pdf) -> None:
+        # Try rotating the pages!
+        try:
+            # cant assume there will be pages
+            if len(pdf.pages) == 0:
+                return
+            page = random.choice(list(pdf.pages))
+            page.rotate(random.choice([0, 90, 180, 270]))
+        except Exception:
+            pass
+
+    def m_add_one_page(self, pdf: Pdf) -> None:
+        # Add an extra page:
+        try:
+            if len(pdf.pages) == 0:
+                return
+            src = random.choice(list(pdf.pages))
+            tmp = Pdf.new()
+            # WARNING you need to create a new pdf to actually copy a page!
+            tmp.pages.append(src)
+            clone = tmp.pages[0]
+            pdf.pages.append(clone)
+        except Exception:
+            pass
+
+    def m_remove_one_page(self, pdf: Pdf) -> None:
+        # Delete one page:
+
+        try:
+            n = len(pdf.pages)
+            if len(pdf.pages) == 0:
+                return
+            num = random.randint(0, n)
+            del pdf.pages[num]
+        except Exception:
+            pass
