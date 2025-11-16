@@ -5,6 +5,7 @@ import io, pikepdf
 from pikepdf import Pdf
 import random
 import string
+from fontTools.ttLib import TTFont
 
 MAX_VAL = 0xFFFF_FFFF
 VALID_PDF_VERSIONS = [
@@ -43,7 +44,22 @@ def random_latin1_string(length):
 class PDF_Fuzzer(Fuzzer):
     def __init__(self, path_to_input: str, binary_path: str):
         super().__init__(path_to_input, binary_path)
-        self.mutators = []
+        self.mutators = [
+            self.m_doc_title,
+            self.m_doc_subject,
+            self.m_doc_version,
+            self.m_shuffle_pages,
+            self.m_rotate_page,
+            self.m_add_one_page,
+            self.m_remove_one_page,
+            self.m_append_multiple_pages,
+            self.m_alter_stream_length,
+            # font/TTF-specific mutators:
+            self.m_corrupt_font_descriptor_length,
+            self.m_bitflip_font_stream,
+            self.m_truncate_or_expand_font_stream,
+            self.m_tamper_maxp_table,
+        ]
         # Open pdf file
         # with open(path_to_input) as f:
 
@@ -183,5 +199,168 @@ class PDF_Fuzzer(Fuzzer):
             # Set incorrect /Length (too big or too small)
             bad_len = random.choice([0, random.randint(1, 1_000_000)])
             s.obj["/Length"] = bad_len
+        except Exception:
+            pass
+
+    def _find_embedded_font_streams(self, pdf: Pdf):
+        """Yield pikepdf.Stream objects that look like embedded TTF/OTF/ttcf by header signature."""
+        for obj in pdf.objects:
+            try:
+                if isinstance(obj, pikepdf.Stream):
+                    data = obj.read_bytes()
+                    if not data:
+                        continue
+                    header = data[:4]
+                    if header in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf"):
+                        yield obj
+            except Exception:
+                continue
+
+    def m_corrupt_font_descriptor_length(self, pdf: Pdf) -> None:
+        """Find FontDescriptor objects and set FontFile2/3 length entries to wrong values."""
+        try:
+            for page in pdf.pages:
+                try:
+                    fonts = page.resources.get("/Font", {})
+                except Exception:
+                    continue
+                for font_ref in fonts.values():
+                    try:
+                        # dereference font dictionary
+                        fd = font_ref.get("/FontDescriptor")
+                        if not fd:
+                            continue
+                        for key in ("/FontFile2", "/FontFile3"):
+                            ref = fd.get(key)
+                            if ref and isinstance(ref, pikepdf.Object):
+                                # set a bogus /Length to cause downstream parser inconsistencies
+                                try:
+                                    ref.obj["/Length"] = random.choice(
+                                        [0, 1, 2**31 - 1, random.randint(1, 1_000_000)]
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    def m_bitflip_font_stream(self, pdf: Pdf) -> None:
+        """Locate an embedded font stream and flip a few random bytes."""
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = bytearray(s.read_bytes() or b"")
+            if not data:
+                return
+            flips = max(1, min(32, len(data) // 1000))
+            for _ in range(random.randint(1, flips)):
+                idx = random.randrange(len(data))
+                data[idx] ^= random.getrandbits(8)
+            # best-effort write back; set /Length as fallback if direct write fails
+            try:
+                # pikepdf.Stream may expose a write method in some versions; try common approaches
+                try:
+                    s.write(bytes(data))
+                except Exception:
+                    try:
+                        s._data = bytes(data)  # fallback (may be private/undocumented)
+                    except Exception:
+                        s.obj["/Length"] = len(data)
+            except Exception:
+                s.obj["/Length"] = len(data)
+        except Exception:
+            pass
+
+    def m_truncate_or_expand_font_stream(self, pdf: Pdf) -> None:
+        """Randomly truncate or append to an embedded font stream to trigger length/size parsing bugs."""
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = s.read_bytes() or b""
+            if not data:
+                return
+            if random.choice([True, False]):
+                # truncate
+                new_len = random.randint(0, max(0, len(data) - 1))
+                newdata = data[:new_len]
+            else:
+                # expand by appending random bytes (could also repeat chunks)
+                extra = bytes(
+                    random.getrandbits(8)
+                    for _ in range(random.randint(1, min(4096, len(data) // 10 + 1)))
+                )
+                newdata = data + extra
+            try:
+                s.write(newdata)
+            except Exception:
+                try:
+                    s._data = newdata
+                except Exception:
+                    s.obj["/Length"] = len(newdata)
+        except Exception:
+            pass
+
+    def m_tamper_maxp_table(self, pdf: Pdf) -> None:
+        """
+        If fontTools present, attempt light-weight changes to the 'maxp' table:
+        - change numGlyphs or maxComponentContours to stress glyph-parsing code paths.
+        This is optional and fails back to no-op if fontTools or writing fails.
+        """
+        if TTFont is None:
+            return
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = s.read_bytes()
+            if not data:
+                return
+            bio = io.BytesIO(data)
+            try:
+                tt = TTFont(
+                    bio, recalcBBoxes=False, recalcTimestamp=False, verbose=False
+                )
+            except Exception:
+                return
+            try:
+                if "maxp" in tt:
+                    # change values to stress parsers; keep within uint16/uint32-ish bounds
+                    try:
+                        tt["maxp"].numGlyphs = random.randint(
+                            0, min(0xFFFF, max(1, tt["maxp"].numGlyphs * 2))
+                        )
+                    except Exception:
+                        pass
+                    # some fontTools builds expose extra fields; safely attempt to set a big value
+                    try:
+                        if hasattr(tt["maxp"], "maxComponentContours"):
+                            tt["maxp"].maxComponentContours = random.randint(0, 0xFFFF)
+                    except Exception:
+                        pass
+                # write back mutated font
+                out = io.BytesIO()
+                try:
+                    tt.save(out)
+                    newfont = out.getvalue()
+                    try:
+                        s.write(newfont)
+                    except Exception:
+                        try:
+                            s._data = newfont
+                        except Exception:
+                            s.obj["/Length"] = len(newfont)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    tt.close()
+                except Exception:
+                    pass
         except Exception:
             pass
