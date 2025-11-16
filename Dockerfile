@@ -35,11 +35,11 @@ RUN wget https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz \
 
 
 # Build QEMU user-mode for x64
-WORKDIR /usr/src/qemu-${QEMU_VERSION}
-RUN ./configure --target-list=x86_64-linux-user --disable-docs \
-    && make -j"$(nproc)" \
-    && make install \
-    && strip /usr/local/bin/qemu-*
+#WORKDIR /usr/src/qemu-${QEMU_VERSION}
+#RUN ./configure --target-list=x86_64-linux-user --disable-docs \
+#    && make -j"$(nproc)" \
+#    && make install \
+#    && strip /usr/local/bin/qemu-*
 
 # This works! But old qemu-x86_64 version 7.2.19 (Debian 1:7.2+dfsg-7+deb12u16)
 # RUN apt-get update \
@@ -50,7 +50,7 @@ RUN ./configure --target-list=x86_64-linux-user --disable-docs \
 # ____________________________________________________________________________________
 
 # Sanity check this please
-RUN qemu-x86_64 -version
+#RUN qemu-x86_64 -version
 
 # make UV create bytecode (more disk space for a perf gain)
 ENV UV_COMPILE_BYTECODE=1
@@ -82,4 +82,3 @@ RUN g++ -std=c++2b -o /app/src/harness/harness /app/src/harness/harness.cpp
 # Run it.
 CMD ["uv", "run", "fuzzer/main.py"]
 # CMD ["python3", "main.py"]
-
