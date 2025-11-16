@@ -155,3 +155,33 @@ class PDF_Fuzzer(Fuzzer):
             del pdf.pages[num]
         except Exception:
             pass
+
+    def m_append_multiple_pages(self, pdf: Pdf) -> None:
+        # Append n random pages to the pdf
+        try:
+            num_pages = len(pdf.pages)
+            if num_pages == 0:
+                return
+            num_dup = random.randint(0, MAX_VAL)
+            for _ in range(0, num_dup):
+                self.m_add_one_page(pdf)
+
+        except Exception:
+            pass
+
+    def m_alter_stream_length(self, pdf: Pdf) -> None:
+        # Adobe Reader RCE (CVE-2023-26369): heap OOB write in sfac_GetSbitBitmap parsing
+        # malformed TrueType sbit glyphs in libCoolType
+        try:
+            # Find random stream object
+            candidate_streams = [
+                o for o in pdf.objects if isinstance(o, pikepdf.Stream)
+            ]
+            if not candidate_streams:
+                return
+            s = random.choice(candidate_streams)
+            # Set incorrect /Length (too big or too small)
+            bad_len = random.choice([0, random.randint(1, 1_000_000)])
+            s.obj["/Length"] = bad_len
+        except Exception:
+            pass
