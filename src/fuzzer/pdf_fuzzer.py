@@ -3,6 +3,28 @@ import random
 from fuzzer_core import Fuzzer
 import io, pikepdf
 from pikepdf import Pdf
+import random
+import string
+
+
+def random_latin1_string(length):
+    """
+    Generates a random string of a specified length using Latin-1 printable characters.
+    """
+    # Latin-1 printable characters range from 32 (space) to 255 (ÿ)
+    # Exclude characters that might cause issues with some systems or displays,
+    # or include them based on specific requirements.
+    # Here, we include characters from 32 to 255, excluding control characters.
+    latin1_chars = [
+        chr(i)
+        for i in range(32, 256)
+        if chr(i) not in string.whitespace and chr(i) not in string.printable[:32]
+    ]  # Exclude common control characters and whitespace
+
+    # If you need a more restricted set, you could define it explicitly:
+    # latin1_chars = string.ascii_letters + string.digits + string.punctuation + "ÄÖÜäöüß" # Example for common Latin-1 extensions
+
+    return "".join(random.choice(latin1_chars) for _ in range(length))
 
 
 class PDF_Fuzzer(Fuzzer):
@@ -49,11 +71,19 @@ class PDF_Fuzzer(Fuzzer):
     # m_xxx represents mutate x
     # Mutates on parser
 
+    # Starter mutation
+    # Note PDF may not have the fields we want!
+    def rand_string(self, n: int = 16):
+        pass
+
     def m_ascii(self):
         pass
 
     def m_doc_title(self, pdf: Pdf) -> None:
-        pass
+        try:
+            pdf.docinfo["/Title"] = random_latin1_string(random.randint(0, 0xFFFF_FFFF))
+        except Exception:
+            pass
 
     def m_doc_subject(self, pdf: Pdf) -> None:
         pass
