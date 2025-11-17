@@ -366,8 +366,8 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_inject_junk_attribute(self, pdf: Pdf) -> None:
-        # Fuzz some metadata so that it crashes!
-        #
+        # Make integer overflow metadata so that it crashes!
+        # no need to try/catch this
         junk = pikepdf.Dictionary(
             {
                 "/Type": "/XObject",
@@ -382,3 +382,96 @@ class PDF_Fuzzer(Fuzzer):
             }
         )
         pdf.make_indirect(junk)
+
+    # Implement CVE-2009-0198 and friends"""
+    def _image_xobject_stream(self, pdf: Pdf):
+        """Helper function to access"""
+        # WE need to select the  /JBIG2Decode or /JPXDecode fields
+        for obj in pdf.objects:
+            try:
+                #  /JBIG2Decode or /JPXDecode are streams
+                if isinstance(obj, pikepdf.Stream):
+                    obj: pikepdf.Stream = obj
+                    if obj.get("/Subtype") != "/Image":
+                        continue
+                    flt = obj.get("/Filter")
+                    filters = []
+                    if isinstance(flt, pikepdf.Array):
+                        filters = list(flt)
+                    elif flt:
+                        filters = [flt]
+
+                    filters = [str(f) for f in filters]
+                    if any(f in ("/JBIG2", "/JPXDecode") for f in filters):
+                        yield obj, obj, filters
+            except Exception:
+                pass
+
+    def m_jbig3_mutate_header(self, pdf: Pdf) -> None:
+        """Corrupt early bytes and dimension dictionary fields of JBIG2 image streams."""
+
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JBIG2Decode" in filters
+            ]
+            if not candidates:
+                return
+            d, stream = random.choice(candidates)
+            # Dictionary dimension fuzz
+            for key in ("/Width", "/Height"):
+                if key in d:
+                    d[key] = random.choice(
+                        [
+                            0,
+                            1,
+                            random.randint(2, 2**16),
+                            random.randint(2**16, 2**24 - 1),
+                        ]
+                    )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 16, 32])
+            # Stream byte-level fuzz (first N bytes — emulate header corruption)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+            n = min(len(data), random.randint(4, 64))
+            for i in range(n):
+                if random.random() < 0.6:
+                    data[i] ^= random.getrandbits(8)
+                if random.random() < 0.15:
+                    data[i] = random.getrandbits(8)
+            # Inconsistent /Length
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            if random.random() < 0.5:
+                # Desync /Length
+                stream.obj["/Length"] = random.choice(
+                    [
+                        0,
+                        len(data) // 2,
+                        len(data) + random.randint(1, 10_000),
+                        2**31 - 1,
+                    ]
+                )
+        except Exception:
+            pass
+        pass
+
+    def m_jbig2_corrupt_decodeparms(self, pdf: Pdf) -> None:
+        """Mutate /DecodeParms of JBIG2 streams (symbol counts, segment sizes, etc.)."""
+        pass
+
+    def m_jpx_mutate_dimension(self, pdf: Pdf) -> None:
+        """Mutate dimension and component metadata for JPX (JPEG2000) images."""
+        pass
+
+    def m_jpx_corrupt_code_stream(self, pdf: Pdf) -> None:
+        """Perform deeper random chunk corruptions inside JPX codestream."""
+        pass
