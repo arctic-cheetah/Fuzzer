@@ -54,7 +54,7 @@ class PDF_Fuzzer(Fuzzer):
             self.m_remove_one_page,
             self.m_append_multiple_pages,
             self.m_alter_stream_length,
-            # font/TTF-specific mutators:
+            # font/TTF-specific mutators for CVE:
             self.m_corrupt_font_descriptor_length,
             self.m_bitflip_font_stream,
             self.m_truncate_or_expand_font_stream,
@@ -103,28 +103,28 @@ class PDF_Fuzzer(Fuzzer):
     # Starter mutation
     # Note PDF may not have the fields we want!
     def m_doc_title(self, pdf: Pdf) -> None:
-        # Mutate ttile
+        """Mutate tile"""
         try:
             pdf.docinfo["/Title"] = random_latin1_string(random.randint(0, MAX_VAL))
         except Exception:
             pass
 
     def m_doc_subject(self, pdf: Pdf) -> None:
-        # Mutate subject
+        """Mutate subject"""
         try:
             pdf.docinfo["/Subject"] = random_latin1_string(random.randint(0, MAX_VAL))
         except Exception:
             pass
 
     def m_doc_version(self, pdf: Pdf) -> None:
-        # Mutate pdf version
+        """Mutate pdf version"""
         try:
             pdf.pdf_version = random.choice(VALID_PDF_VERSIONS)
         except Exception:
             pass
 
     def m_shuffle_pages(self, pdf: Pdf) -> None:
-        # Try shuffling the pages!
+        """Try shuffling the pages!"""
         try:
             pages = list(pdf.pages)
             random.shuffle(pages)
@@ -136,7 +136,7 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_rotate_page(self, pdf: Pdf) -> None:
-        # Try rotating the pages!
+        """Try rotating the pages!"""
         try:
             # cant assume there will be pages
             if len(pdf.pages) == 0:
@@ -147,7 +147,7 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_add_one_page(self, pdf: Pdf) -> None:
-        # Add an extra page:
+        """Add an extra page:"""
         try:
             if len(pdf.pages) == 0:
                 return
@@ -161,7 +161,7 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_remove_one_page(self, pdf: Pdf) -> None:
-        # Delete one page:
+        """Delete one page:"""
 
         try:
             n = len(pdf.pages)
@@ -173,7 +173,7 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_append_multiple_pages(self, pdf: Pdf) -> None:
-        # Append n random pages to the pdf
+        """Append n random pages to the pdf"""
         try:
             num_pages = len(pdf.pages)
             if num_pages == 0:
@@ -186,8 +186,10 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_alter_stream_length(self, pdf: Pdf) -> None:
-        # Adobe Reader RCE (CVE-2023-26369): heap OOB write in sfac_GetSbitBitmap parsing
-        # malformed TrueType sbit glyphs in libCoolType
+        """
+        Adobe Reader RCE (CVE-2023-26369): heap OOB write in sfac_GetSbitBitmap parsing
+        malformed TrueType sbit glyphs in libCoolType
+        """
         try:
             # Find random stream object
             candidate_streams = [
@@ -366,7 +368,7 @@ class PDF_Fuzzer(Fuzzer):
             pass
 
     def m_inject_junk_attribute(self, pdf: Pdf) -> None:
-        # Fuzz some metadata so that it crashes!
+        """Fuzz some metadata so that it crashes!"""
         #
         junk = pikepdf.Dictionary(
             {
