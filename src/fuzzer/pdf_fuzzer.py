@@ -7,7 +7,7 @@ import random
 import string
 from fontTools.ttLib import TTFont
 
-MAX_VAL = 0xFFFF_FFFF
+MAX_VAL = 0xFFFF_FFFF_FFFF_FF
 VALID_PDF_VERSIONS = [
     "1.0",
     "1.1",
@@ -364,3 +364,21 @@ class PDF_Fuzzer(Fuzzer):
                     pass
         except Exception:
             pass
+
+    def m_inject_junk_attribute(self, pdf: Pdf) -> None:
+        # Fuzz some metadata so that it crashes!
+        #
+        junk = pikepdf.Dictionary(
+            {
+                "/Type": "/XObject",
+                "/Subtype": "/Image",
+                "/Width": MAX_VAL,
+                "/Height": MAX_VAL,
+                "/ColorSpace": "/DeviceRGB",
+                "/BitsPerComponent": random.choice([1, 2, 4, 8, 16]),
+                "/Filter": random.choice(
+                    ["/FlateDecode", "/ASCII85Decode", "/DCTDecode"]
+                ),
+            }
+        )
+        pdf.make_indirect(junk)
