@@ -28,7 +28,7 @@ class Fuzzer:
         self.mutators = []
 
     def run_binary(self):
-        seed = self.new_method()
+        seed = self.get_random_integer()
 
         for x in range(NUM_TO_RUN):
             try:
@@ -66,7 +66,7 @@ class Fuzzer:
                 print(err)
                 pass
 
-    def new_method(self):
+    def get_random_integer(self):
         with open(self.path_to_input, "rb") as f:
             seed = f.read()
         return seed

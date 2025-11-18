@@ -466,12 +466,229 @@ class PDF_Fuzzer(Fuzzer):
 
     def m_jbig2_corrupt_decodeparms(self, pdf: Pdf) -> None:
         """Mutate /DecodeParms of JBIG2 streams (symbol counts, segment sizes, etc.)."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JBIG2Decode" in filters
+            ]
+            if not candidates:
+                return
+
+            d, _ = random.choice(candidates)
+            params = d.get("/DecodeParams")
+            if params and isinstance(params, pikepdf.Object):
+                # fuzz some JBIG2 keys,
+                keys = [
+                    "/JBIG2Globals",
+                    "/Template",
+                    "/ColourDepth",
+                    "/BlackIs1",
+                    "/Jbig2SegmentCount",
+                    "/Jbig2SymbolCount",
+                ]
+                # Add some random values to the above fields:
+                for k in keys:
+                    params[k] = self._get_random_integer()
+
+                # Insert random  keys
+                for _ in range(random.randint(1, 5)):
+                    key_name = f"/BadKey{random.randint(0, 9999)}"
+                    params[key_name] = random.choice(
+                        [
+                            0,
+                            1,
+                            MAX_VAL,
+                            self._get_random_integer(),
+                            random_latin1_string(random.randint(1, 12)),
+                        ]
+                    )
+        except Exception:
+            pass
         pass
+
+    def _get_random_integer(self):
+        return random.randint(0, MAX_VAL)
 
     def m_jpx_mutate_dimension(self, pdf: Pdf) -> None:
         """Mutate dimension and component metadata for JPX (JPEG2000) images."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+
+            d, stream = random.choice(candidates)
+
+            # Adjust dictionary level width/height
+            if "/Width" in d:
+                d["/Width"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 100_000),
+                    ]
+                )
+            if "/Height" in d:
+                d["/Height"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 100_000),
+                    ]
+                )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 12, 16, 24, 32])
+            # Maybe change /ColorSpace
+            if random.random() < 0.4:
+                d["/ColorSpace"] = random.choice(
+                    [
+                        "/DeviceGray",
+                        "/DeviceRGB",
+                        "/DeviceCMYK",
+                        pikepdf.Name("/Indexed"),
+                    ]
+                )
+            # Codestream header nibble corruption (first 32–128 bytes)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+            hdr = min(len(data), random.randint(32, 128))
+            for i in range(hdr):
+                if random.random() < 0.35:
+                    data[i] ^= random.getrandbits(4)  # tweak lower bits
+                if random.random() < 0.05:
+                    data[i] = random.getrandbits(8)
+        except Exception:
+            pass
         pass
 
     def m_jpx_corrupt_code_stream(self, pdf: Pdf) -> None:
+        """Mutate dimension and component metadata for JPX (JPEG2000) images."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_streams(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+            d, stream = random.choice(candidates)
+            # Adjust dictionary level width/height
+            if "/Width" in d:
+                d["/Width"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 4096),
+                        random.randint(4097, 100_000),
+                    ]
+                )
+            if "/Height" in d:
+                d["/Height"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 4096),
+                        random.randint(4097, 100_000),
+                    ]
+                )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 12, 16, 24, 32])
+            # Maybe change /ColorSpace
+            if random.random() < 0.4:
+                d["/ColorSpace"] = random.choice(
+                    [
+                        "/DeviceGray",
+                        "/DeviceRGB",
+                        "/DeviceCMYK",
+                        pikepdf.Name("/Indexed"),
+                    ]
+                )
+            # Codestream header nibble corruption (first 32–128 bytes)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+
+            hdr = min(len(data), random.randint(32, 128))
+            for i in range(hdr):
+                if random.random() < 0.35:
+                    data[i] ^= random.getrandbits(4)  # tweak lower bits
+                if random.random() < 0.05:
+                    data[i] = random.getrandbits(8)
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            # Inconsistent /Length occasionally
+            if random.random() < 0.5:
+                stream.obj["/Length"] = random.choice(
+                    [
+                        0,
+                        len(data) + random.randint(1, 50_000),
+                        len(data) // 3,
+                        2**31 - 1,
+                    ]
+                )
+        except Exception:
+            pass
+
+    def m_jpx_corrupt_codestream(self, pdf: Pdf) -> None:
         """Perform deeper random chunk corruptions inside JPX codestream."""
-        pass
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_streams(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+            _, stream = random.choice(candidates)
+            data = bytearray(stream.read_bytes() or b"")
+            if len(data) < 32:
+                return
+            # Random internal offsets
+            edits = random.randint(1, 10)
+            for _ in range(edits):
+                start = random.randint(0, len(data) - 1)
+                span = random.randint(1, min(256, len(data) - start))
+                mode = random.choice(["overwrite", "bitflip", "inflate"])
+                for i in range(start, start + span):
+                    if mode == "overwrite":
+                        data[i] = random.getrandbits(8)
+                    elif mode == "bitflip":
+                        data[i] ^= random.getrandbits(8)
+                    elif mode == "inflate" and random.random() < 0.3:
+                        data[i] = (data[i] + random.randint(1, 200)) & 0xFF
+            # Optional truncation/expansion
+            if random.random() < 0.3:
+                if random.random() < 0.5:
+                    # truncate
+                    new_len = random.randint(0, len(data) - 1)
+                    data = data[:new_len]
+                else:
+                    # expand
+                    extra = bytes(
+                        random.getrandbits(8) for _ in range(random.randint(1, 4096))
+                    )
+                    data.extend(extra)
+            # Write corrupted data
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            if random.random() < 0.4:
+                stream.obj["/Length"] = random.choice(
+                    [len(data), len(data) + random.randint(1, 100_000), 0, 2**31 - 1]
+                )
+        except Exception:
+            return
