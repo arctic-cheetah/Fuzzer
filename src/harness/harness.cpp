@@ -1,8 +1,9 @@
+#include <cstdint>
+#include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>
-#include <atomic>
 #include <map>
 #include <string.h>
 #include <fcntl.h>
@@ -11,17 +12,18 @@
 #include <sys/stat.h>
 #include <iostream>
 #include "harness.h"
-#include <errno.h>
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <print>
 #include <list>
+#include <elf.h>
+#include <vector>
 
-#if USE_QEMU
-#include <qemu-plugin.h>
-#else
 #include <sys/ptrace.h>
-#endif
+
+#include "hash.h"
+#include "elf.h"
+#include "region.h"
 
 #define MAX_DATA_LEN (1 << 20) // 1MB
 #define BIT_MAP_LEN (1 << 16)  // 64KB
@@ -63,7 +65,17 @@ std::map<std::string, uint64_t> get_registers(pid_t pid) {
     };
 }
 
-void execute_task_ptrace(std::string binary){
+void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
+    char *real_path = realpath(binary.c_str(), nullptr);
+    if (!real_path) {
+        perror("realpath");
+        exit(EXIT_FAILURE);
+    }
+
+    auto exe = cache.get_executable(real_path);
+    
+    free(real_path);
+
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
@@ -71,9 +83,9 @@ void execute_task_ptrace(std::string binary){
     }
 
     if (pid == 0) {
-        std::print(std::cout, "waiting for ptrace\n");
+        std::print(stderr, "waiting for ptrace\n");
         asm volatile("int3");
-        std::print(std::cout, "starting {}\n", binary);
+        std::print(stderr, "starting {}\n", binary);
 
         // replace stdout with /dev/null for now
         close(STDOUT_FILENO);
@@ -106,17 +118,17 @@ void execute_task_ptrace(std::string binary){
 
             if (WIFSTOPPED(status)) {
                 int sig = WSTOPSIG(status);
-                std::print(std::cerr, "trapped: {}\n", strsignal(sig));
+                std::print(stderr, "trapped: {}\n", strsignal(sig));
 
                 if (sig != SIGTRAP) {
                     if (sig == SIGSEGV || sig == SIGABRT || sig == SIGFPE) {
-                        std::print(std::cerr, "Crashed with signal: {}\n", strsignal(sig));
+                        std::print(stderr, "Crashed with signal: {}\n", strsignal(sig));
 
                         signal = sig;
                         registers = get_registers(pid);
                         break;
                     } else {
-                        std::print(std::cerr, "Continuing after signal: {}\n", strsignal(sig));
+                        std::print(stderr, "Continuing after signal: {}\n", strsignal(sig));
                         ptrace(PTRACE_CONT, pid, nullptr, sig);
                         continue;
                     }
@@ -130,20 +142,9 @@ void execute_task_ptrace(std::string binary){
         }
 
         if (signal != 0) {
+            auto regions = get_memory_regions(pid);
+
             std::print(std::cerr, "Crash detected!\n");
-            std::print(R"({{ "signal": {}, "registers": {{)", signal);
-
-            bool first = true;
-            for (const auto& [reg, value] : registers) {
-                if (!first) {
-                    std::print(", ");
-                } else {
-                    first = false;
-                }
-
-                std::print(R"("{}": {})", reg, value);
-            }
-            std::print(R"(}}, "return_code": {} }})", WEXITSTATUS(status));
 
             auto rbp = registers["rbp"];
             auto rsp = registers["rsp"];
@@ -151,7 +152,7 @@ void execute_task_ptrace(std::string binary){
             std::print(std::cerr, "RBP: {:#x}, RSP: {:#x}\n", rbp, rsp);
 
             // make a trace
-            std::list<uint64_t> stack_trace;
+            std::list<uint64_t> stack_trace {registers["rip"]};
             
             uint64_t current_rbp = rbp;
             while (current_rbp != 0) {
@@ -160,12 +161,79 @@ void execute_task_ptrace(std::string binary){
                 current_rbp = ptrace(PTRACE_PEEKDATA, pid, current_rbp, nullptr);
             }
 
+            std::list<uint64_t> trace_offsets;
+            for (const auto& addr : stack_trace) {
+                auto *region = region_for_address(regions, addr);
+                if (region) {
+                    trace_offsets.push_back(addr - region->start + region->offset);
+                } else {
+                    trace_offsets.push_back(addr);
+                }
+            }
+
+            auto hash = hash_trace(trace_offsets);
+
+            std::print(std::cerr, "Stack trace hash: {:#x}\n", hash);
+
             std::print(std::cerr, "Stack trace:\n");
             for (const auto& addr : stack_trace) {
-                std::print(std::cerr, "  {:#x}\n", addr);
+                auto *region = region_for_address(regions, addr);
+                if (region) {
+                    std::print(std::cerr, "  {:#x} ({}+{:#x})\n", addr, region->pathname,
+                               addr - region->start + region->offset);
+                } else {
+                    std::print(std::cerr, "  {:#x} (unknown region)\n", addr);
+                }
             }
 
             system(std::format("cat /proc/{}/maps", pid).c_str());
+
+            FILE *auxv_file = fopen(std::format("/proc/{}/auxv", pid).c_str(), "rb");
+            if (!auxv_file) {
+                perror("fopen auxv");
+                return;
+            }
+            
+            std::vector<Elf64_auxv_t> auxv_data;
+
+            size_t read_bytes;
+            Elf64_auxv_t entry;
+            while ((read_bytes = fread(&entry, sizeof(Elf64_auxv_t), 1, auxv_file)) == 1){
+                auxv_data.push_back(entry);
+            }
+
+            auto auxv = get_important_auxv(auxv_data);
+            auto image_base = figure_out_image_base(*exe, auxv);
+
+            std::print("image base: {:#x}\n", image_base);
+
+            struct user u;
+            if (ptrace(PTRACE_PEEKUSER, pid, nullptr, &u) < 0) {
+                perror("ptrace PEEKUSER");
+                return;
+            }
+
+            std::print(".text base: {:#x}\n", u.start_code);
+
+            auto log_filepath = std::format("fuzzer-{:x}-{}.json", hash, pid);
+            std::print(std::cerr, "Writing crash log to: {}\n", log_filepath);
+
+            std::ofstream dumpfile;
+            dumpfile.open(log_filepath, std::ios::out);
+
+            std::print(dumpfile, R"({{ "hash": "{:x}", "pid": {}, "signal": {}, "registers": {{)", hash, pid, signal);
+
+            bool first = true;
+            for (const auto& [reg, value] : registers) {
+                if (!first) {
+                    std::print(dumpfile, ", ");
+                } else {
+                    first = false;
+                }
+
+                std::print(dumpfile, R"("{}": {})", reg, value);
+            }
+            std::print(dumpfile, R"(}}, "return_code": {} }})", WEXITSTATUS(status));
         }
     }
 }
@@ -175,8 +243,56 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    execute_task_ptrace(argv[1]);
+    elf_exe_cache cache;
+    execute_task_ptrace(cache, argv[1]);
 
     return 0;
 
+}
+
+std::vector<memory_region> get_memory_regions(pid_t pid) {
+    std::vector<memory_region> regions;
+    std::ifstream maps_file(std::format("/proc/{}/maps", pid));
+    std::string line;
+
+    while (std::getline(maps_file, line)) {
+        memory_region region;
+        uint64_t offset;
+
+        // split the line by spaces
+        auto parts = std::vector<std::string>{};
+        std::string part;
+        auto start = line.begin();
+        auto it = line.begin();
+        while (it != line.end()) {
+            auto start = it;
+            while (it != line.end() && *it != ' ') {
+                it++;
+            }
+            parts.push_back(std::string(start, it));
+            while (it != line.end() && *it == ' ') {
+                it++;
+            }
+        }
+
+        sscanf(parts[0].c_str(), "%lx-%lx", &region.start, &region.end);
+        sscanf(parts[2].c_str(), "%lx", &region.offset);
+        region.permissions = parts[1];
+
+        // some mappings don't have a pathname??
+        region.pathname = parts.size() >= 6 ? parts[5] : "";
+
+        regions.push_back(region);
+    }
+
+    return regions;
+}
+
+memory_region *region_for_address(std::vector<memory_region> &regions, uint64_t address) {
+    for (auto &region : regions) {
+        if (address >= region.start && address < region.end) {
+            return &region;
+        }
+    }
+    return nullptr;
 }
