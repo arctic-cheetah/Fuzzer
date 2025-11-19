@@ -37,21 +37,25 @@ def main():
     example_inputs = mount_point("example_inputs")
     binary_path = mount_point("binaries")
 
+    def resolve_input(f):
+        return f'{example_inputs}/{f}'
+
+    def resolve_bin(f):
+        return f'{binary_path}/{f}'
+
     # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
-    input_arr = [ example_inputs + "/csv1.txt",example_inputs + "/csv2.txt",example_inputs + "/json1.txt",example_inputs + "/json2.txt",example_inputs + "/xml1.txt",example_inputs + "/xml2.txt",example_inputs + "/xml3.txt",example_inputs + "/plaintext1.txt",example_inputs + "/plaintext2.txt", example_inputs + "/plaintext3.txt"]
-    bin_arr = [
-        binary_path + "/csv1",
-        binary_path + "/csv2",
-        binary_path + "/json1",
-        binary_path + "/json2",
-        binary_path + "/xml1",
-        binary_path + "/xml2",
-        binary_path + "/xml3",
-        binary_path + "/plaintext1",
-        binary_path + "/plaintext2",
-        binary_path + "/plaintext3"
-    ]
-    test_arr = [input_arr, bin_arr]
+    input_bin_files = [('csv1.txt', 'csv1'),
+                       ('csv2.txt', 'csv2'),
+                       ('json1.txt', 'json1'),
+                       ('json2.txt', 'json2'),
+                       ('xml1.txt', 'xml1'),
+                       ('xml2.txt', 'xml2'),
+                       ('xml3.txt', 'xml3'),
+                       ('plaintext1.txt', 'plaintext1'),
+                       ('plaintext2.txt', 'plaintext2'),
+                       ('plaintext3.txt', 'plaintext3')]
+    input_bin_paths = [(resolve_input(i), resolve_bin(b))
+                       for i, b in input_bin_files]
 
     # Env is not really neeeded
     env = os.environ.copy()
@@ -79,10 +83,7 @@ def main():
     check_file_type = fileTypeCheck()
 
     # TODO: Parallelise here later!
-    for x in range(0, len(bin_arr)):
-
-        in_data = input_arr[x]
-        binary_path = bin_arr[x]
+    for in_data, binary_path in input_bin_paths:
         # TODO: CALL FUZZER HERE
         file_type = check_file_type.detect_input_file_type(in_data)
         print(f"Discovered input type is: {file_type}")
