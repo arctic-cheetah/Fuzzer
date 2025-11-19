@@ -25,6 +25,8 @@
 #include "elf.h"
 #include "region.h"
 
+#define debug_print(...) std::print(stderr, __VA_ARGS__)
+
 #define MAX_DATA_LEN (1 << 20) // 1MB
 #define BIT_MAP_LEN (1 << 16)  // 64KB
 
@@ -112,23 +114,23 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
         while (true) {
             waitpid(pid, &status, 0);
             if (WIFEXITED(status)) {
-                std::print(std::cerr, "exited with status: {}\n", WEXITSTATUS(status));
+                debug_print("exited with status: {}\n", WEXITSTATUS(status));
                 break; // Child has exited
             }
 
             if (WIFSTOPPED(status)) {
                 int sig = WSTOPSIG(status);
-                std::print(stderr, "trapped: {}\n", strsignal(sig));
+                debug_print("trapped: {}\n", strsignal(sig));
 
                 if (sig != SIGTRAP) {
                     if (sig == SIGSEGV || sig == SIGABRT || sig == SIGFPE) {
-                        std::print(stderr, "Crashed with signal: {}\n", strsignal(sig));
+                        debug_print("Crashed with signal: {}\n", strsignal(sig));
 
                         signal = sig;
                         registers = get_registers(pid);
                         break;
                     } else {
-                        std::print(stderr, "Continuing after signal: {}\n", strsignal(sig));
+                        debug_print("Continuing after signal: {}\n", strsignal(sig));
                         ptrace(PTRACE_CONT, pid, nullptr, sig);
                         continue;
                     }
@@ -144,12 +146,12 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
         if (signal != 0) {
             auto regions = get_memory_regions(pid);
 
-            std::print(std::cerr, "Crash detected!\n");
+            debug_print("Crash detected!\n");
 
             auto rbp = registers["rbp"];
             auto rsp = registers["rsp"];
 
-            std::print(std::cerr, "RBP: {:#x}, RSP: {:#x}\n", rbp, rsp);
+            debug_print("RBP: {:#x}, RSP: {:#x}\n", rbp, rsp);
 
             // make a trace
             std::list<uint64_t> stack_trace {registers["rip"]};
@@ -173,16 +175,16 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
 
             auto hash = hash_trace(trace_offsets);
 
-            std::print(std::cerr, "Stack trace hash: {:#x}\n", hash);
+            debug_print("Stack trace hash: {:#x}\n", hash);
 
-            std::print(std::cerr, "Stack trace:\n");
+            debug_print("Stack trace:\n");
             for (const auto& addr : stack_trace) {
                 auto *region = region_for_address(regions, addr);
                 if (region) {
-                    std::print(std::cerr, "  {:#x} ({}+{:#x})\n", addr, region->pathname,
+                    debug_print("  {:#x} ({}+{:#x})\n", addr, region->pathname,
                                addr - region->start + region->offset);
                 } else {
-                    std::print(std::cerr, "  {:#x} (unknown region)\n", addr);
+                    debug_print("  {:#x} (unknown region)\n", addr);
                 }
             }
 
@@ -216,7 +218,7 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
             std::print(".text base: {:#x}\n", u.start_code);
 
             auto log_filepath = std::format("fuzzer-{:x}-{}.json", hash, pid);
-            std::print(std::cerr, "Writing crash log to: {}\n", log_filepath);
+            debug_print("Writing crash log to: {}\n", log_filepath);
 
             std::ofstream dumpfile;
             dumpfile.open(log_filepath, std::ios::out);
