@@ -1,17 +1,17 @@
 <html>
     <head>
-        <link href="%n%n%p%n%s%p%p%x%n%x%p%x%x%n%x%x%s%s%x%x%n%n%n%s%s%p%n%p%s%p%n%x%s%p%x%x%s%x%shttp://somewebsite.com" />
+        <link href="%n%n%s%s%xhttp://somewebsite.com" />
     </head>
     <body>
         <h1>I'm not a web developer.</h1>
     </body>
 
     <div id="#lol">
-        <a href="%n%n%p%n%s%p%p%x%n%x%p%x%x%n%x%x%s%s%x%x%n%n%n%s%s%p%n%p%s%p%n%x%s%p%x%x%s%x%shttp://google.com">Here is some link...</a>
+        <a href="%n%n%s%s%xhttp://google.com">Here is some link...</a>
     </div>
 
 
     <tail>
-        <a href="%n%n%p%n%s%p%p%x%n%x%p%x%x%n%x%x%s%s%x%x%n%n%n%s%s%p%n%p%s%p%n%x%s%p%x%x%s%x%shttp://bing.com">Footer link</a>
+        <a href="%n%n%s%s%xhttp://bing.com">Footer link</a>
     </tail>
 </html>
