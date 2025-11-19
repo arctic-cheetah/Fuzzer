@@ -1,4 +1,5 @@
 import random
+import re
 
 from fuzzer_core import Fuzzer
 import io, pikepdf
@@ -54,14 +55,26 @@ class PDF_Fuzzer(Fuzzer):
             self.m_remove_one_page,
             self.m_append_multiple_pages,
             self.m_alter_stream_length,
+            self.fuzz_anotations,
             # font/TTF-specific mutators:
             self.m_corrupt_font_descriptor_length,
             self.m_bitflip_font_stream,
             self.m_truncate_or_expand_font_stream,
             self.m_tamper_maxp_table,
+            self.m_inject_junk_attribute,
+            self.m_jbig3_mutate_header,
+            self.m_jbig2_corrupt_decodeparms,
+            self.m_jpx_mutate_dimension,
+            self.m_jpx_corrupt_code_stream,
+            self.m_jpx_corrupt_codestream,
         ]
         # Open pdf file
         # with open(path_to_input) as f:
+        self.post_mutators = [
+            self.b_corrupt_all_startxref,
+            self.b_mutate_all_xref_tables,
+            self.b_mutate_all_xref_tables,
+        ]
 
     # TODO: Parse the pdf input!
 
@@ -84,6 +97,14 @@ class PDF_Fuzzer(Fuzzer):
         # Convert back to bytes
         saved_pdf = io.BytesIO()
         pdf.save(saved_pdf)
+
+        # mutate the xref header
+        for _ in range(0, 3):
+            mut = random.choice(self.post_mutators)
+            try:
+                mut(saved_pdf)
+            except Exception:
+                pass
 
         try:
             pdf.close()
@@ -500,7 +521,7 @@ class PDF_Fuzzer(Fuzzer):
                             1,
                             MAX_VAL,
                             self._get_random_integer(),
-                            random_latin1_string(random.randint(1, 12)),
+                            random_latin1_string(random.randint(1, 0xFF)),
                         ]
                     )
         except Exception:
@@ -692,3 +713,199 @@ class PDF_Fuzzer(Fuzzer):
                 )
         except Exception:
             return
+
+    def fuzz_anotations(self, pdf: Pdf) -> None:
+        """Fuzz the annotations in a document!"""
+        try:
+            if not pdf.pages:
+                return
+            page = random.choice(list(pdf.pages))
+            # Make annotations if none!
+            annot = page.get("/Annots")
+            if annot is None:
+                annot = pikepdf.Array()
+                page["/Annots"] = annot
+
+            annot = pikepdf.Dictionary(
+                {
+                    "/Type": "/Annot",
+                    "/Subtype": random.choice(
+                        ["/Text", "/Link", "/Square", "/Circle", "/Stamp"]
+                    ),
+                    "/Rect": pikepdf.Array(
+                        [0, 0, self._get_random_integer(), self._get_random_integer()]
+                    ),
+                    "/Contents": random_latin1_string(random.randint(0, 255)),
+                }
+            )
+        except Exception:
+            pass
+
+    # 2 EOF mutation
+    # Mutation of xref table requires byte level mutation because
+    # pikepdf will attempt to update the xref table when the pdf is saved!
+    def _replace_span(self, buf: bytearray, start: int, end: int, repl: bytes):
+        """Helper function to replace data"""
+        del buf[start:end]
+        buf[start:start] = repl
+
+    def b_corrupt_all_startxref(self, buf: bytearray):
+        """Corrupt every startxref numeric pointer; maybe drop final %%EOF."""
+        for m in re.finditer(rb"startxref\s+(\d+)", bytes(buf)):
+            new_val = random.choice(
+                [
+                    0,
+                    len(buf),
+                    len(buf) + self._get_random_integer(),
+                    self._get_random_integer(),
+                ]
+            )
+            self._replace_span(buf, m.start(1), m.end(1), str(new_val).encode("ascii"))
+        # drop last %%EOF
+        eof_pos = bytes(buf).rfind(b"%%EOF")
+        if eof_pos != -1:
+            # Delete EOF
+            if random.random() < 0.5:
+                self._replace_span(buf, eof_pos, eof_pos, b"")
+            else:
+                # Add random numbers at the end
+                self._replace_span(
+                    buf, eof_pos + 5, eof_pos + 5, self._get_random_integer()
+                )
+
+    def b_mutate_all_xref_tables(self, buf: bytearray):
+        """Scramble digits in every classic xref section and mismatch trailer /Size."""
+        bs = bytes(buf)
+        # xref ... trailer (non-stream) blocks
+        ith_entry = 1
+        for block in re.finditer(rb"xref\s+(.*?)(?=trailer)", bs, re.DOTALL):
+            s, e = block.start(1), block.end(1)
+            # Mutate the first row
+            # xref
+            # 0 4  <= Row 1 (object number and number of entries)
+            # 0000000000 65535 f  <= Row 2
+            # 0000000110 00000 n  <= Row 3...
+            # 0000000250 00000 n
+            # 0000000315 00000 n
+            if ith_entry == 1:
+                objNum = random.randint(0, 1_000_000_000 - 1)
+                entry = random.randint(0, 1_000_000_000 - 1)
+                repl = f"{objNum} {entry}".encode()
+                self._replace_span(buf, s, e, repl)
+                ith_entry += 1
+            else:
+                offset = random.randint(0, 1_000_000_000 - 1)
+                gen_num = random.randint(0, 1_000_000 - 1)
+                keyword = random.choice(["f", "n"])
+                repl = f"{offset:010d} {gen_num:05d} {keyword}".encode()
+                self._replace_span(buf, s, e, repl)
+
+        # mutate every trailer dictionary /Size and /Prev
+        for t in re.finditer(rb"trailer\s*<<(.*?)>>", bs, re.DOTALL):
+            ds, de = t.start(1), t.end(1)
+            dict_bytes = bytearray(bs[ds:de])
+            msize = re.search(rb"/Size\s+(\d+)", dict_bytes)
+            if msize:
+                self._replace_span(
+                    dict_bytes,
+                    msize.start(1),
+                    msize.end(1),
+                    str(random.choice([0, random.randint(1, 10), 2**31 - 1])).encode(
+                        "ascii"
+                    ),
+                )
+            if random.random() < 0.4:
+                # corrupt /Prev if present or inject one
+                mprev = re.search(rb"/Prev\s+(\d+)", dict_bytes)
+                if mprev:
+                    self._replace_span(
+                        dict_bytes,
+                        mprev.start(1),
+                        mprev.end(1),
+                        str(random.randint(0, len(buf) * 2)).encode("ascii"),
+                    )
+                else:
+                    inject = f"/Prev {random.randint(0, len(buf)*2)} ".encode("ascii")
+                    self._replace_span(dict_bytes, 0, 0, inject)
+            self._replace_span(buf, ds, de, bytes(dict_bytes))
+
+        pass
+
+    def b_mutate_all_xref_stream(self, buf: bytearray):
+        """Mutate dictionaries of every /Type /XRef stream and flip bytes in payload."""
+        bs = bytes(buf)
+        pat = re.compile(
+            rb"(\d+)\s+(\d+)\s+obj\s*(<<.*?/Type\s*/XRef.*?>>)\s*stream\s*\r?\n",
+            re.DOTALL,
+        )
+        for m in pat.finditer(bs):
+            dstart, dend = m.start(3), m.end(3)
+            dict_bytes = bytearray(bs[dstart:dend])
+            # mutate /W
+            w = re.search(rb"/W\s*\[([^\]]+)\]", dict_bytes)
+            if w and random.random() < 0.9:
+                new_w = f"/W [{random.randint(0,4)} {random.randint(0,4)} {random.randint(0,4)}]".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, w.start(), w.end(), new_w)
+            # mutate /Index
+            idx = re.search(rb"/Index\s*\[([^\]]+)\]", dict_bytes)
+            if idx and random.random() < 0.6:
+                new_idx = f"/Index [{random.randint(0,10)} {random.randint(0, 2**20)}]".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, idx.start(), idx.end(), new_idx)
+            # mutate /Size
+            sz = re.search(rb"/Size\s+(\d+)", dict_bytes)
+            if sz and random.random() < 0.8:
+                self._replace_span(
+                    dict_bytes,
+                    sz.start(1),
+                    sz.end(1),
+                    str(
+                        random.choice([0, random.randint(1, 1000), 2**31 - 1])
+                    ).encode("ascii"),
+                )
+            # maybe inject bogus key
+            if random.random() < 0.3:
+                inject = f"/BadKey{random.randint(0,999)} {random.randint(0,2**31-1)} ".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, 0, 0, inject)
+            self._replace_span(buf, dstart, dend, bytes(dict_bytes))
+            # mutate stream payload
+            after = bytes(buf[dend : dend + 5000])
+            sh = re.search(rb">>\s*stream\s*\r?\n", after)
+            if not sh:
+                continue
+            stream_hdr_end = dend + sh.end()
+            em = re.search(rb"\r?\nendstream", bytes(buf[stream_hdr_end:]))
+            if not em:
+                continue
+            sstart = stream_hdr_end
+            send = stream_hdr_end + em.start()
+            payload = bytearray(buf[sstart:send])
+            if payload:
+                flips = random.randint(1, min(64, len(payload) // 128 + 1))
+                for _ in range(flips):
+                    i = random.randrange(len(payload))
+                    payload[i] ^= random.getrandbits(8)
+                self._replace_span(buf, sstart, send, bytes(payload))
+                # desync /Length occasionally
+                if random.random() < 0.5:
+                    local = bytes(buf[dstart : dstart + 2000])
+                    lm = re.search(rb"/Length\s+(\d+)", local)
+                    if lm:
+                        new_len = str(
+                            random.choice(
+                                [
+                                    0,
+                                    len(payload) // 2,
+                                    len(payload) + random.randint(1, 10000),
+                                    2**31 - 1,
+                                ]
+                            )
+                        ).encode("ascii")
+                        self._replace_span(
+                            buf, dstart + lm.start(1), dstart + lm.end(1), new_len
+                        )
