@@ -27,7 +27,7 @@ from pathlib import Path
 from globals import PATH_TO_HARNESS, mount_point
 import struct
 from time import sleep
-from file_type_check import fileTypeCheck
+import file_type_check
 from fuzzer import make_fuzzer
 import os
 from multiprocessing import Pool
@@ -55,15 +55,12 @@ def main():
     
     test_arr = [input_arr, bin_arr]
 
-    # 3) Mutation/Fuzz here
-    check_file_type = fileTypeCheck()
-
     # TODO: Parallelise here later!
     for x in range(0, len(bin_arr)):
         in_data = input_arr[x]
         binary_path = bin_arr[x]
         # TODO: CALL FUZZER HERE
-        file_type = check_file_type.detect_input_file_type(in_data)
+        file_type = file_type_check.detect_input_file_type(in_data)
         print(f"Discovered input type is: {file_type}")
         fuzzer = make_fuzzer(file_type, in_data, binary_path)
         fuzzer.run_binary()
