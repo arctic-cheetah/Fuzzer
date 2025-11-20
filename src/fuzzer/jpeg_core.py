@@ -74,18 +74,18 @@ SEGMENT_KEY_ARR = np.array(list(SEGMENTS.keys()))
 @dataclass
 class JPEG:
     """ represents jpeg in memory """
-    name: str
+    # also called markers oops
     data: np.ndarray = field(init=False)
-
     segments: OrderedDict = field(default_factory=OrderedDict)
 
-    def __post_init__(self):
-        self._load_data()
+    def __init__(self, buffer):
+        self._load_data(buffer)
+        self.segments = OrderedDict()
         self._find_segments()
 
-    def _load_data(self):
+    def _load_data(self, buffer):
         """ load data as raw bytes """
-        self.data= np.fromfile(self.name, dtype=np.uint8)
+        self.data = np.frombuffer(buffer, dtype=np.uint8)
 
     def _find_segments(self):
         """ find and store the index of segments in the jpeg image
@@ -96,8 +96,13 @@ class JPEG:
         for name, place in zip(seg_type[true_seg], maybe_seg[true_seg]):
             self.segments[SEGMENTS[name]] = place
 
+    def to_bytes(self):
+        """ returns """
+        return np.ndarray.tobytes(self.data)
+
 
 if __name__ == "__main__":
     import sys
-    jpg =JPEG(sys.argv[1])
-    print("segments found = ", jpg.segments)
+    with open(sys.argv[1], "rb") as f:
+        jpg =JPEG(f.read())
+        print("segments found = ", jpg.segments)
