@@ -16,6 +16,7 @@ RUN apt-get update \
     libglib2.0-dev libpixman-1-dev libfdt-dev libseccomp-dev \
     zlib1g-dev libzstd-dev \
     ca-certificates wget xz-utils git \
+    libzmq3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install C++ tools
@@ -78,6 +79,8 @@ RUN mkdir /fuzzer_output
 # Compile it
 # Build harness
 RUN g++ -std=c++2b -o /app/src/harness/harness /app/src/harness/harness.cpp
+
+RUN uv build
 
 # Run it.
 CMD ["uv", "run", "fuzzer/main.py"]

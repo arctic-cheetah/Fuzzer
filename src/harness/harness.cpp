@@ -1,7 +1,12 @@
+#include <assert.h>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <fstream>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 #include <unistd.h>
 #include <stdint.h>
 #include <map>
@@ -18,6 +23,10 @@
 #include <list>
 #include <elf.h>
 #include <vector>
+#include <stack>
+#include <thread>
+
+#include "cppzmq/zmq.hpp"
 
 #include <sys/ptrace.h>
 
@@ -27,6 +36,7 @@
 
 #define debug_print(...) std::print(stderr, __VA_ARGS__)
 
+#define IPC_MSG_LEN 1024
 #define MAX_DATA_LEN (1 << 20) // 1MB
 #define BIT_MAP_LEN (1 << 16)  // 64KB
 
@@ -53,6 +63,56 @@ static const char *SHM_PATH = "/comp6447_fuzzer_shm";
 
 int init_shared_memory();
 
+struct job_result {
+    int return_code;
+    int pid;
+
+    std::map<std::string, uint64_t> registers;
+    std::vector<memory_region> regions;
+
+    enum {
+        exit,
+        timeout,
+        signal,
+    } status;
+
+    struct {
+        int signal;
+        std::map<std::string, uint64_t> registers;
+        std::list<uint64_t> stack_trace;
+        uint64_t hash;
+    } crash_info;
+
+    static job_result exited(int return_code, int pid) {
+        return job_result{
+            .return_code = return_code,
+            .pid = pid,
+            .status = exit
+        };
+    }
+
+    static job_result timed_out(int pid) {
+        return job_result{
+            .pid = pid,
+            .status = timeout
+        };
+    }
+
+    static job_result crashed(int signal, std::map<std::string, uint64_t> registers,
+                             std::list<uint64_t> stack_trace, uint64_t hash, int pid) {
+        return job_result{
+            .pid = pid,
+            .status = job_result::signal,
+            .crash_info = {
+                .signal = signal,
+                .registers = registers,
+                .stack_trace = stack_trace,
+                .hash = hash
+            }
+        };
+    }
+};
+
 std::map<std::string, uint64_t> get_registers(pid_t pid) {
     auto regs = user_regs_struct{};
     ptrace(PTRACE_GETREGS, pid, nullptr, &regs);
@@ -67,7 +127,7 @@ std::map<std::string, uint64_t> get_registers(pid_t pid) {
     };
 }
 
-void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
+struct job_result execute_task_ptrace(elf_exe_cache &cache, std::string binary, int pipe_fd){
     char *real_path = realpath(binary.c_str(), nullptr);
     if (!real_path) {
         perror("realpath");
@@ -100,6 +160,10 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
         dup2(dev_null, STDOUT_FILENO);
         close(dev_null);
 
+        close(STDIN_FILENO);
+        dup2(pipe_fd, STDIN_FILENO);
+        close(pipe_fd);
+
         // Execute the binary with input data
         execl(binary.c_str(), binary.c_str(), nullptr);
         perror("execl");
@@ -115,7 +179,7 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
             waitpid(pid, &status, 0);
             if (WIFEXITED(status)) {
                 debug_print("exited with status: {}\n", WEXITSTATUS(status));
-                break; // Child has exited
+                return job_result::exited(WEXITSTATUS(status), pid);
             }
 
             if (WIFSTOPPED(status)) {
@@ -193,7 +257,7 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
             FILE *auxv_file = fopen(std::format("/proc/{}/auxv", pid).c_str(), "rb");
             if (!auxv_file) {
                 perror("fopen auxv");
-                return;
+                exit(1);
             }
             
             std::vector<Elf64_auxv_t> auxv_data;
@@ -212,44 +276,181 @@ void execute_task_ptrace(elf_exe_cache &cache, std::string binary){
             struct user u;
             if (ptrace(PTRACE_PEEKUSER, pid, nullptr, &u) < 0) {
                 perror("ptrace PEEKUSER");
-                return;
+                exit(1);
             }
 
             std::print(".text base: {:#x}\n", u.start_code);
 
-            auto log_filepath = std::format("fuzzer-{:x}-{}.json", hash, pid);
-            debug_print("Writing crash log to: {}\n", log_filepath);
-
-            std::ofstream dumpfile;
-            dumpfile.open(log_filepath, std::ios::out);
-
-            std::print(dumpfile, R"({{ "hash": "{:x}", "pid": {}, "signal": {}, "registers": {{)", hash, pid, signal);
-
-            bool first = true;
-            for (const auto& [reg, value] : registers) {
-                if (!first) {
-                    std::print(dumpfile, ", ");
-                } else {
-                    first = false;
-                }
-
-                std::print(dumpfile, R"("{}": {})", reg, value);
-            }
-            std::print(dumpfile, R"(}}, "return_code": {} }})", WEXITSTATUS(status));
+            return job_result::crashed(signal, registers, stack_trace, hash, pid);
         }
     }
+
+    __builtin_unreachable();
+}
+
+void write_dump(std::ostream &dumpfile, const job_result &result) {
+    std::print(dumpfile, R"({{ "pid": {}, "status": "{}", )", result.pid,
+               result.status == job_result::exit ? "exited" :
+               result.status == job_result::timeout ? "timeout" : "signal");
+
+    if (result.status == job_result::exit) {
+        std::print(dumpfile, R"("return_code": {} )", result.return_code);
+    } else if (result.status == job_result::timeout) {
+        // nothing more to add
+    } else if (result.status == job_result::signal) {
+        std::print(dumpfile, R"("signal": {}, "hash": "{:x}", "registers": {{)",
+                   result.crash_info.signal, result.crash_info.hash);
+
+        bool first = true;
+        for (const auto& [reg, value] : result.crash_info.registers) {
+            if (!first) {
+                std::print(dumpfile, ", ");
+            } else {
+                first = false;
+            }
+
+            std::print(dumpfile, R"("{}": {})", reg, value);
+        }
+        std::print(dumpfile, R"(}}, "stack_trace": [)");
+
+        first = true;
+        for (const auto& addr : result.crash_info.stack_trace) {
+            if (!first) {
+                std::print(dumpfile, ", ");
+            } else {
+                first = false;
+            }
+
+            std::print(dumpfile, R"({})", addr);
+        }
+        std::print(dumpfile, R"(] )");
+    }
+
+    std::print(dumpfile, R"(}})");
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
+        std::print(stderr, "Usage: {} <num-of-threads>\n", argv[0]);
         return 1;
     }
 
+    struct job {
+        std::string binary;
+    };
+
+    int num_threads = atoi(argv[1]);
+    assert(num_threads > 0);
+
+    // create the named pipes so the python fuzzer can
+    // give input to the binary
+
+    std::list<std::string> pipes;
+    for (int i = 0; i < num_threads; i++) {
+        auto name = (std::format("/tmp/fuzzer-{}", i));
+
+        if (mkfifo(name.c_str(), 0666) < 0) {
+            perror("mkfifo");
+            return 1;
+        }
+
+        pipes.push_back(name);
+    }
+
+    zmq::context_t ctx{1};
+    zmq::socket_t socket{ctx, zmq::socket_type::rep};
+    zmq::socket_t event_socket{ctx, zmq::socket_type::pub};
+
+    socket.bind("ipc:///tmp/fuzzer");
+    event_socket.bind("ipc:///tmp/fuzzer-events");
+
+    std::mutex event_socket_mutex;
+    std::mutex job_mutex;
+    std::condition_variable jobs_on_queue;
+    std::condition_variable job_queue_empty;
+
+    std::map<std::string, std::thread> threads;
+    std::deque<job> jobs;
+
     elf_exe_cache cache;
-    execute_task_ptrace(cache, argv[1]);
+
+    auto runner_thread = [&](std::string pipe) {
+        auto fd = open(pipe.c_str(), O_RDONLY);
+        if (fd < 0) {
+            perror("open");
+            return 1;
+        }
+
+        for (;;) {
+            std::string binary;
+            {
+                std::unique_lock lock{job_mutex};
+                // get a job off the queue
+                jobs_on_queue.wait(lock, [&jobs]() {
+                    return !jobs.empty();
+                });
+
+                auto job = std::move(jobs.front());
+                jobs.pop_front();
+
+                binary = job.binary;
+
+                socket.send(zmq::buffer(pipe), zmq::send_flags::none);
+
+                job_queue_empty.notify_one();
+            }
+
+            // run the binary
+            auto res = execute_task_ptrace(cache, binary, fd);
+            
+            {
+                std::unique_lock lock{event_socket_mutex};
+                auto msg = std::string{};
+                {
+                    std::ostringstream oss;
+                    write_dump(oss, res);
+                    msg = oss.str();
+                }
+                event_socket.send(zmq::buffer(msg), zmq::send_flags::none);
+            }
+        }
+    };
+
+    std::thread thread = std::thread(runner_thread, pipes.front());
+
+    for (;;) {
+        zmq::message_t request{IPC_MSG_LEN};
+
+        std::unique_lock lock{job_mutex};
+        job_queue_empty.wait(lock, [&jobs]() {
+            return jobs.empty();
+        });
+
+        // Wait for the next request from client
+        auto res = socket.recv(request, zmq::recv_flags::none);
+        if (!res) {
+            // probably got an EAGAIN
+            continue;
+        }
+
+        auto size = res.value();
+        assert(size <= IPC_MSG_LEN);
+
+        // <cmd>;<args>
+        auto msg = std::string(static_cast<char *>(request.data()), size);
+        
+        auto delimiter_pos = msg.find(';');
+        auto cmd = msg.substr(0, delimiter_pos);
+        
+        if (cmd == "exec") {
+            auto binary = msg.substr(delimiter_pos + 1);
+            
+            jobs.push_back(job{.binary = binary});
+            jobs_on_queue.notify_one();
+        }
+    }
 
     return 0;
-
 }
 
 std::vector<memory_region> get_memory_regions(pid_t pid) {

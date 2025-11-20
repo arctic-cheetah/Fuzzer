@@ -1,6 +1,8 @@
 import os, re, random, subprocess
+import asyncio
 from typing import List, Callable
 from globals import mount_point
+import zmq
 
 NUM_TO_RUN = 50_000
 TIMEOUT = 1
@@ -28,7 +30,39 @@ class Fuzzer:
         with open(self.path_to_input, "rb") as f:
             seed = f.read()
 
+        events = zmq.socket(zmq.SUB)
+        events.connect("ipc:///tmp/fuzzer-events")
+        events.setsockopt_string(zmq.SUBSCRIBE, "")
+
+        cmds = zmq.socket(zmq.REQ)
+        cmds.connect("ipc:///tmp/fuzzer")
+
+        pipe = open("/tmp/fuzzer-pipe1", "wb")
+
         for x in range(NUM_TO_RUN):
+            try:
+                if hasattr(self, "make_payload"):
+                    data = self.make_payload(seed)
+                else:
+                    data = self.mutate(seed)
+
+                # Notify harness to process input
+                cmds.send(f"exec;{self.binary_path}".encode())
+                pipe_name = cmds.recv()  # Wait for acknowledgment
+                print(f"sending input {x} to harness via {pipe_name.decode()}")
+                
+                # Send data to harness via pipe
+                size_bytes = len(data).to_bytes(4, byteorder="little")
+                pipe.write(size_bytes)
+                pipe.write(data)
+                pipe.flush()
+
+                print(events.recv().decode())  # Wait for harness to signal completion
+            except:
+                print(f"Error during fuzzing iteration {x}")
+                continue
+
+        '''for x in range(NUM_TO_RUN):
             try:
                 if hasattr(self, "make_payload"):
                     data = self.make_payload(seed)  # <-- deep_* 会在这条路径里被用到
@@ -61,7 +95,7 @@ class Fuzzer:
 
             except Exception as err:
                 print(err)
-                pass
+                pass'''
 
     def log_crash(self, data: bytes):
         out = mount_point(f"fuzzer_output/bad_{self.binary_name}.txt")
