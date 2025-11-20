@@ -1,4 +1,4 @@
-from tokenize import maybe
+from collections import OrderedDict
 import numpy as np
 from dataclasses import dataclass, field
 # source: https://www.disktuna.com/list-of-jpeg-markers/
@@ -77,7 +77,7 @@ class JPEG:
     name: str
     data: np.ndarray = field(init=False)
 
-    segments: dict = field(init=False)
+    segments: OrderedDict = field(default_factory=OrderedDict)
 
     def __post_init__(self):
         self._load_data()
@@ -95,3 +95,9 @@ class JPEG:
         true_seg = np.isin(seg_type, SEGMENT_KEY_ARR)
         for name, place in zip(seg_type[true_seg], maybe_seg[true_seg]):
             self.segments[SEGMENTS[name]] = place
+
+
+if __name__ == "__main__":
+    import sys
+    jpg =JPEG(sys.argv[1])
+    print("segments found = ", jpg.segments)
