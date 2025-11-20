@@ -1,0 +1,911 @@
+import random
+import re
+
+from fuzzer_core import Fuzzer
+import io, pikepdf
+from pikepdf import Pdf
+import random
+import string
+from fontTools.ttLib import TTFont
+
+MAX_VAL = 0xFFFF_FFFF_FFFF_FF
+VALID_PDF_VERSIONS = [
+    "1.0",
+    "1.1",
+    "1.2",
+    "1.3",
+    "1.4",
+    "1.5",
+    "1.6",
+    "1.7",
+    "2.0",
+]
+
+
+def random_latin1_string(length):
+    """
+    Generates a random string of a specified length using Latin-1 printable characters.
+    """
+    # Latin-1 printable characters range from 32 (space) to 255 (ÿ)
+    # Exclude characters that might cause issues with some systems or displays,
+    # or include them based on specific requirements.
+    # Here, we include characters from 32 to 255, excluding control characters.
+    latin1_chars = [
+        chr(i)
+        for i in range(32, 256)
+        if chr(i) not in string.whitespace and chr(i) not in string.printable[:32]
+    ]  # Exclude common control characters and whitespace
+
+    # If you need a more restricted set, you could define it explicitly:
+    # latin1_chars = string.ascii_letters + string.digits + string.punctuation + "ÄÖÜäöüß" # Example for common Latin-1 extensions
+
+    return "".join(random.choice(latin1_chars) for _ in range(length))
+
+
+class PDF_Fuzzer(Fuzzer):
+    def __init__(self, path_to_input: str, binary_path: str):
+        super().__init__(path_to_input, binary_path)
+        self.mutators = [
+            self.m_doc_title,
+            self.m_doc_subject,
+            self.m_doc_version,
+            self.m_shuffle_pages,
+            self.m_rotate_page,
+            self.m_add_one_page,
+            self.m_remove_one_page,
+            self.m_append_multiple_pages,
+            self.m_alter_stream_length,
+            self.fuzz_anotations,
+            # font/TTF-specific mutators:
+            self.m_corrupt_font_descriptor_length,
+            self.m_bitflip_font_stream,
+            self.m_truncate_or_expand_font_stream,
+            self.m_tamper_maxp_table,
+            self.m_inject_junk_attribute,
+            self.m_jbig3_mutate_header,
+            self.m_jbig2_corrupt_decodeparms,
+            self.m_jpx_mutate_dimension,
+            self.m_jpx_corrupt_code_stream,
+            self.m_jpx_corrupt_codestream,
+        ]
+        # Open pdf file
+        # with open(path_to_input) as f:
+        self.post_mutators = [
+            self.b_corrupt_all_startxref,
+            self.b_mutate_all_xref_tables,
+            self.b_mutate_all_xref_tables,
+        ]
+
+    # TODO: Parse the pdf input!
+
+    def make_payload(self, seed: bytes):
+        """Produce a mutated pdf as bytes"""
+        # TODO: check just in case file is not pdf
+        try:
+            pdf: Pdf = pikepdf.open(io.BytesIO(seed))
+        except Exception:
+            return self.mutate(seed)
+
+        #  Begin mutation here!
+        for _ in range(1, random.randint(1, 6)):
+            mut = random.choice(self.mutators)
+            try:
+                mut(pdf)
+            except Exception:
+                pass
+
+        # Convert back to bytes
+        saved_pdf = io.BytesIO()
+        pdf.save(saved_pdf)
+
+        # mutate the xref header
+        for _ in range(0, 3):
+            mut = random.choice(self.post_mutators)
+            try:
+                mut(saved_pdf)
+            except Exception:
+                pass
+
+        try:
+            pdf.close()
+        except Exception:
+            pass
+
+        return saved_pdf.getvalue()
+
+    # edit fields metadata of the pdf fuzzer
+
+    # Override run_binary!
+    # -----------------------------------
+    # Mutator strategies below:
+    # m_xxx represents mutate x
+    # Mutates on parser
+
+    # Starter mutation
+    # Note PDF may not have the fields we want!
+    def m_doc_title(self, pdf: Pdf) -> None:
+        # Mutate ttile
+        try:
+            pdf.docinfo["/Title"] = random_latin1_string(random.randint(0, MAX_VAL))
+        except Exception:
+            pass
+
+    def m_doc_subject(self, pdf: Pdf) -> None:
+        # Mutate subject
+        try:
+            pdf.docinfo["/Subject"] = random_latin1_string(random.randint(0, MAX_VAL))
+        except Exception:
+            pass
+
+    def m_doc_version(self, pdf: Pdf) -> None:
+        # Mutate pdf version
+        try:
+            pdf.pdf_version = random.choice(VALID_PDF_VERSIONS)
+        except Exception:
+            pass
+
+    def m_shuffle_pages(self, pdf: Pdf) -> None:
+        # Try shuffling the pages!
+        try:
+            pages = list(pdf.pages)
+            random.shuffle(pages)
+            # Replace page order
+            pdf.pages.clear()
+            for p in pages:
+                pdf.pages.append(p)
+        except Exception:
+            pass
+
+    def m_rotate_page(self, pdf: Pdf) -> None:
+        # Try rotating the pages!
+        try:
+            # cant assume there will be pages
+            if len(pdf.pages) == 0:
+                return
+            page = random.choice(list(pdf.pages))
+            page.rotate(random.choice([0, 90, 180, 270]))
+        except Exception:
+            pass
+
+    def m_add_one_page(self, pdf: Pdf) -> None:
+        # Add an extra page:
+        try:
+            if len(pdf.pages) == 0:
+                return
+            src = random.choice(list(pdf.pages))
+            tmp = Pdf.new()
+            # WARNING you need to create a new pdf to actually copy a page!
+            tmp.pages.append(src)
+            clone = tmp.pages[0]
+            pdf.pages.append(clone)
+        except Exception:
+            pass
+
+    def m_remove_one_page(self, pdf: Pdf) -> None:
+        # Delete one page:
+
+        try:
+            n = len(pdf.pages)
+            if len(pdf.pages) == 0:
+                return
+            num = random.randint(0, n)
+            del pdf.pages[num]
+        except Exception:
+            pass
+
+    def m_append_multiple_pages(self, pdf: Pdf) -> None:
+        # Append n random pages to the pdf
+        try:
+            num_pages = len(pdf.pages)
+            if num_pages == 0:
+                return
+            num_dup = random.randint(0, MAX_VAL)
+            for _ in range(0, num_dup):
+                self.m_add_one_page(pdf)
+
+        except Exception:
+            pass
+
+    def m_alter_stream_length(self, pdf: Pdf) -> None:
+        # Adobe Reader RCE (CVE-2023-26369): heap OOB write in sfac_GetSbitBitmap parsing
+        # malformed TrueType sbit glyphs in libCoolType
+        try:
+            # Find random stream object
+            candidate_streams = [
+                o for o in pdf.objects if isinstance(o, pikepdf.Stream)
+            ]
+            if not candidate_streams:
+                return
+            s = random.choice(candidate_streams)
+            # Set incorrect /Length (too big or too small)
+            bad_len = random.choice([0, random.randint(1, 1_000_000)])
+            s.obj["/Length"] = bad_len
+        except Exception:
+            pass
+
+    def _find_embedded_font_streams(self, pdf: Pdf):
+        """Yield pikepdf.Stream objects that look like embedded TTF/OTF/ttcf by header signature."""
+        for obj in pdf.objects:
+            try:
+                if isinstance(obj, pikepdf.Stream):
+                    data = obj.read_bytes()
+                    if not data:
+                        continue
+                    header = data[:4]
+                    if header in (b"\x00\x01\x00\x00", b"OTTO", b"ttcf"):
+                        yield obj
+            except Exception:
+                continue
+
+    def m_corrupt_font_descriptor_length(self, pdf: Pdf) -> None:
+        """Find FontDescriptor objects and set FontFile2/3 length entries to wrong values."""
+        try:
+            for page in pdf.pages:
+                try:
+                    fonts = page.resources.get("/Font", {})
+                except Exception:
+                    continue
+                for font_ref in fonts.values():
+                    try:
+                        # dereference font dictionary
+                        fd = font_ref.get("/FontDescriptor")
+                        if not fd:
+                            continue
+                        for key in ("/FontFile2", "/FontFile3"):
+                            ref = fd.get(key)
+                            if ref and isinstance(ref, pikepdf.Object):
+                                # set a bogus /Length to cause downstream parser inconsistencies
+                                try:
+                                    ref.obj["/Length"] = random.choice(
+                                        [0, 1, 2**31 - 1, random.randint(1, 1_000_000)]
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    def m_bitflip_font_stream(self, pdf: Pdf) -> None:
+        """Locate an embedded font stream and flip a few random bytes."""
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = bytearray(s.read_bytes() or b"")
+            if not data:
+                return
+            flips = max(1, min(32, len(data) // 1000))
+            for _ in range(random.randint(1, flips)):
+                idx = random.randrange(len(data))
+                data[idx] ^= random.getrandbits(8)
+            # best-effort write back; set /Length as fallback if direct write fails
+            try:
+                # pikepdf.Stream may expose a write method in some versions; try common approaches
+                try:
+                    s.write(bytes(data))
+                except Exception:
+                    try:
+                        s._data = bytes(data)  # fallback (may be private/undocumented)
+                    except Exception:
+                        s.obj["/Length"] = len(data)
+            except Exception:
+                s.obj["/Length"] = len(data)
+        except Exception:
+            pass
+
+    def m_truncate_or_expand_font_stream(self, pdf: Pdf) -> None:
+        """Randomly truncate or append to an embedded font stream to trigger length/size parsing bugs."""
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = s.read_bytes() or b""
+            if not data:
+                return
+            if random.choice([True, False]):
+                # truncate
+                new_len = random.randint(0, max(0, len(data) - 1))
+                newdata = data[:new_len]
+            else:
+                # expand by appending random bytes (could also repeat chunks)
+                extra = bytes(
+                    random.getrandbits(8)
+                    for _ in range(random.randint(1, min(4096, len(data) // 10 + 1)))
+                )
+                newdata = data + extra
+            try:
+                s.write(newdata)
+            except Exception:
+                try:
+                    s._data = newdata
+                except Exception:
+                    s.obj["/Length"] = len(newdata)
+        except Exception:
+            pass
+
+    def m_tamper_maxp_table(self, pdf: Pdf) -> None:
+        """
+        If fontTools present, attempt light-weight changes to the 'maxp' table:
+        - change numGlyphs or maxComponentContours to stress glyph-parsing code paths.
+        This is optional and fails back to no-op if fontTools or writing fails.
+        """
+        if TTFont is None:
+            return
+        try:
+            streams = list(self._find_embedded_font_streams(pdf))
+            if not streams:
+                return
+            s = random.choice(streams)
+            data = s.read_bytes()
+            if not data:
+                return
+            bio = io.BytesIO(data)
+            try:
+                tt = TTFont(
+                    bio, recalcBBoxes=False, recalcTimestamp=False, verbose=False
+                )
+            except Exception:
+                return
+            try:
+                if "maxp" in tt:
+                    # change values to stress parsers; keep within uint16/uint32-ish bounds
+                    try:
+                        tt["maxp"].numGlyphs = random.randint(
+                            0, min(0xFFFF, max(1, tt["maxp"].numGlyphs * 2))
+                        )
+                    except Exception:
+                        pass
+                    # some fontTools builds expose extra fields; safely attempt to set a big value
+                    try:
+                        if hasattr(tt["maxp"], "maxComponentContours"):
+                            tt["maxp"].maxComponentContours = random.randint(0, 0xFFFF)
+                    except Exception:
+                        pass
+                # write back mutated font
+                out = io.BytesIO()
+                try:
+                    tt.save(out)
+                    newfont = out.getvalue()
+                    try:
+                        s.write(newfont)
+                    except Exception:
+                        try:
+                            s._data = newfont
+                        except Exception:
+                            s.obj["/Length"] = len(newfont)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    tt.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def m_inject_junk_attribute(self, pdf: Pdf) -> None:
+        # Make integer overflow metadata so that it crashes!
+        # no need to try/catch this
+        junk = pikepdf.Dictionary(
+            {
+                "/Type": "/XObject",
+                "/Subtype": "/Image",
+                "/Width": MAX_VAL,
+                "/Height": MAX_VAL,
+                "/ColorSpace": "/DeviceRGB",
+                "/BitsPerComponent": random.choice([1, 2, 4, 8, 16]),
+                "/Filter": random.choice(
+                    ["/FlateDecode", "/ASCII85Decode", "/DCTDecode"]
+                ),
+            }
+        )
+        pdf.make_indirect(junk)
+
+    # Implement CVE-2009-0198 and friends"""
+    def _image_xobject_stream(self, pdf: Pdf):
+        """Helper function to access"""
+        # WE need to select the  /JBIG2Decode or /JPXDecode fields
+        for obj in pdf.objects:
+            try:
+                #  /JBIG2Decode or /JPXDecode are streams
+                if isinstance(obj, pikepdf.Stream):
+                    obj: pikepdf.Stream = obj
+                    if obj.get("/Subtype") != "/Image":
+                        continue
+                    flt = obj.get("/Filter")
+                    filters = []
+                    if isinstance(flt, pikepdf.Array):
+                        filters = list(flt)
+                    elif flt:
+                        filters = [flt]
+
+                    filters = [str(f) for f in filters]
+                    if any(f in ("/JBIG2", "/JPXDecode") for f in filters):
+                        yield obj, obj, filters
+            except Exception:
+                pass
+
+    def m_jbig3_mutate_header(self, pdf: Pdf) -> None:
+        """Corrupt early bytes and dimension dictionary fields of JBIG2 image streams."""
+
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JBIG2Decode" in filters
+            ]
+            if not candidates:
+                return
+            d, stream = random.choice(candidates)
+            # Dictionary dimension fuzz
+            for key in ("/Width", "/Height"):
+                if key in d:
+                    d[key] = random.choice(
+                        [
+                            0,
+                            1,
+                            random.randint(2, 2**16),
+                            random.randint(2**16, 2**24 - 1),
+                        ]
+                    )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 16, 32])
+            # Stream byte-level fuzz (first N bytes — emulate header corruption)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+            n = min(len(data), random.randint(4, 64))
+            for i in range(n):
+                if random.random() < 0.6:
+                    data[i] ^= random.getrandbits(8)
+                if random.random() < 0.15:
+                    data[i] = random.getrandbits(8)
+            # Inconsistent /Length
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            if random.random() < 0.5:
+                # Desync /Length
+                stream.obj["/Length"] = random.choice(
+                    [
+                        0,
+                        len(data) // 2,
+                        len(data) + random.randint(1, 10_000),
+                        2**31 - 1,
+                    ]
+                )
+        except Exception:
+            pass
+        pass
+
+    def m_jbig2_corrupt_decodeparms(self, pdf: Pdf) -> None:
+        """Mutate /DecodeParms of JBIG2 streams (symbol counts, segment sizes, etc.)."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JBIG2Decode" in filters
+            ]
+            if not candidates:
+                return
+
+            d, _ = random.choice(candidates)
+            params = d.get("/DecodeParams")
+            if params and isinstance(params, pikepdf.Object):
+                # fuzz some JBIG2 keys,
+                keys = [
+                    "/JBIG2Globals",
+                    "/Template",
+                    "/ColourDepth",
+                    "/BlackIs1",
+                    "/Jbig2SegmentCount",
+                    "/Jbig2SymbolCount",
+                ]
+                # Add some random values to the above fields:
+                for k in keys:
+                    params[k] = self._get_random_integer()
+
+                # Insert random  keys
+                for _ in range(random.randint(1, 5)):
+                    key_name = f"/BadKey{random.randint(0, 9999)}"
+                    params[key_name] = random.choice(
+                        [
+                            0,
+                            1,
+                            MAX_VAL,
+                            self._get_random_integer(),
+                            random_latin1_string(random.randint(1, 0xFF)),
+                        ]
+                    )
+        except Exception:
+            pass
+        pass
+
+    def _get_random_integer(self):
+        return random.randint(0, MAX_VAL)
+
+    def m_jpx_mutate_dimension(self, pdf: Pdf) -> None:
+        """Mutate dimension and component metadata for JPX (JPEG2000) images."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_stream(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+
+            d, stream = random.choice(candidates)
+
+            # Adjust dictionary level width/height
+            if "/Width" in d:
+                d["/Width"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 100_000),
+                    ]
+                )
+            if "/Height" in d:
+                d["/Height"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 100_000),
+                    ]
+                )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 12, 16, 24, 32])
+            # Maybe change /ColorSpace
+            if random.random() < 0.4:
+                d["/ColorSpace"] = random.choice(
+                    [
+                        "/DeviceGray",
+                        "/DeviceRGB",
+                        "/DeviceCMYK",
+                        pikepdf.Name("/Indexed"),
+                    ]
+                )
+            # Codestream header nibble corruption (first 32–128 bytes)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+            hdr = min(len(data), random.randint(32, 128))
+            for i in range(hdr):
+                if random.random() < 0.35:
+                    data[i] ^= random.getrandbits(4)  # tweak lower bits
+                if random.random() < 0.05:
+                    data[i] = random.getrandbits(8)
+        except Exception:
+            pass
+        pass
+
+    def m_jpx_corrupt_code_stream(self, pdf: Pdf) -> None:
+        """Mutate dimension and component metadata for JPX (JPEG2000) images."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_streams(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+            d, stream = random.choice(candidates)
+            # Adjust dictionary level width/height
+            if "/Width" in d:
+                d["/Width"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 4096),
+                        random.randint(4097, 100_000),
+                    ]
+                )
+            if "/Height" in d:
+                d["/Height"] = random.choice(
+                    [
+                        0,
+                        1,
+                        random.randint(2, 4096),
+                        random.randint(4097, 100_000),
+                    ]
+                )
+            if "/BitsPerComponent" in d:
+                d["/BitsPerComponent"] = random.choice([1, 2, 4, 8, 12, 16, 24, 32])
+            # Maybe change /ColorSpace
+            if random.random() < 0.4:
+                d["/ColorSpace"] = random.choice(
+                    [
+                        "/DeviceGray",
+                        "/DeviceRGB",
+                        "/DeviceCMYK",
+                        pikepdf.Name("/Indexed"),
+                    ]
+                )
+            # Codestream header nibble corruption (first 32–128 bytes)
+            data = bytearray(stream.read_bytes() or b"")
+            if not data:
+                return
+
+            hdr = min(len(data), random.randint(32, 128))
+            for i in range(hdr):
+                if random.random() < 0.35:
+                    data[i] ^= random.getrandbits(4)  # tweak lower bits
+                if random.random() < 0.05:
+                    data[i] = random.getrandbits(8)
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            # Inconsistent /Length occasionally
+            if random.random() < 0.5:
+                stream.obj["/Length"] = random.choice(
+                    [
+                        0,
+                        len(data) + random.randint(1, 50_000),
+                        len(data) // 3,
+                        2**31 - 1,
+                    ]
+                )
+        except Exception:
+            pass
+
+    def m_jpx_corrupt_codestream(self, pdf: Pdf) -> None:
+        """Perform deeper random chunk corruptions inside JPX codestream."""
+        try:
+            candidates = [
+                (d, s)
+                for d, s, filters in self._image_xobject_streams(pdf)
+                if "/JPXDecode" in filters
+            ]
+            if not candidates:
+                return
+            _, stream = random.choice(candidates)
+            data = bytearray(stream.read_bytes() or b"")
+            if len(data) < 32:
+                return
+            # Random internal offsets
+            edits = random.randint(1, 10)
+            for _ in range(edits):
+                start = random.randint(0, len(data) - 1)
+                span = random.randint(1, min(256, len(data) - start))
+                mode = random.choice(["overwrite", "bitflip", "inflate"])
+                for i in range(start, start + span):
+                    if mode == "overwrite":
+                        data[i] = random.getrandbits(8)
+                    elif mode == "bitflip":
+                        data[i] ^= random.getrandbits(8)
+                    elif mode == "inflate" and random.random() < 0.3:
+                        data[i] = (data[i] + random.randint(1, 200)) & 0xFF
+            # Optional truncation/expansion
+            if random.random() < 0.3:
+                if random.random() < 0.5:
+                    # truncate
+                    new_len = random.randint(0, len(data) - 1)
+                    data = data[:new_len]
+                else:
+                    # expand
+                    extra = bytes(
+                        random.getrandbits(8) for _ in range(random.randint(1, 4096))
+                    )
+                    data.extend(extra)
+            # Write corrupted data
+            try:
+                stream.write(bytes(data))
+            except Exception:
+                try:
+                    stream._data = bytes(data)
+                except Exception:
+                    stream.obj["/Length"] = len(data)
+            if random.random() < 0.4:
+                stream.obj["/Length"] = random.choice(
+                    [len(data), len(data) + random.randint(1, 100_000), 0, 2**31 - 1]
+                )
+        except Exception:
+            return
+
+    def fuzz_anotations(self, pdf: Pdf) -> None:
+        """Fuzz the annotations in a document!"""
+        try:
+            if not pdf.pages:
+                return
+            page = random.choice(list(pdf.pages))
+            # Make annotations if none!
+            annot = page.get("/Annots")
+            if annot is None:
+                annot = pikepdf.Array()
+                page["/Annots"] = annot
+
+            annot = pikepdf.Dictionary(
+                {
+                    "/Type": "/Annot",
+                    "/Subtype": random.choice(
+                        ["/Text", "/Link", "/Square", "/Circle", "/Stamp"]
+                    ),
+                    "/Rect": pikepdf.Array(
+                        [0, 0, self._get_random_integer(), self._get_random_integer()]
+                    ),
+                    "/Contents": random_latin1_string(random.randint(0, 255)),
+                }
+            )
+        except Exception:
+            pass
+
+    # 2 EOF mutation
+    # Mutation of xref table requires byte level mutation because
+    # pikepdf will attempt to update the xref table when the pdf is saved!
+    def _replace_span(self, buf: bytearray, start: int, end: int, repl: bytes):
+        """Helper function to replace data"""
+        del buf[start:end]
+        buf[start:start] = repl
+
+    def b_corrupt_all_startxref(self, buf: bytearray):
+        """Corrupt every startxref numeric pointer; maybe drop final %%EOF."""
+        for m in re.finditer(rb"startxref\s+(\d+)", bytes(buf)):
+            new_val = random.choice(
+                [
+                    0,
+                    len(buf),
+                    len(buf) + self._get_random_integer(),
+                    self._get_random_integer(),
+                ]
+            )
+            self._replace_span(buf, m.start(1), m.end(1), str(new_val).encode("ascii"))
+        # drop last %%EOF
+        eof_pos = bytes(buf).rfind(b"%%EOF")
+        if eof_pos != -1:
+            # Delete EOF
+            if random.random() < 0.5:
+                self._replace_span(buf, eof_pos, eof_pos, b"")
+            else:
+                # Add random numbers at the end
+                self._replace_span(
+                    buf, eof_pos + 5, eof_pos + 5, self._get_random_integer()
+                )
+
+    def b_mutate_all_xref_tables(self, buf: bytearray):
+        """Scramble digits in every classic xref section and mismatch trailer /Size."""
+        bs = bytes(buf)
+        # xref ... trailer (non-stream) blocks
+        ith_entry = 1
+        for block in re.finditer(rb"xref\s+(.*?)(?=trailer)", bs, re.DOTALL):
+            s, e = block.start(1), block.end(1)
+            # Mutate the first row
+            # xref
+            # 0 4  <= Row 1 (object number and number of entries)
+            # 0000000000 65535 f  <= Row 2
+            # 0000000110 00000 n  <= Row 3...
+            # 0000000250 00000 n
+            # 0000000315 00000 n
+            if ith_entry == 1:
+                objNum = random.randint(0, 1_000_000_000 - 1)
+                entry = random.randint(0, 1_000_000_000 - 1)
+                repl = f"{objNum} {entry}".encode()
+                self._replace_span(buf, s, e, repl)
+                ith_entry += 1
+            else:
+                offset = random.randint(0, 1_000_000_000 - 1)
+                gen_num = random.randint(0, 1_000_000 - 1)
+                keyword = random.choice(["f", "n"])
+                repl = f"{offset:010d} {gen_num:05d} {keyword}".encode()
+                self._replace_span(buf, s, e, repl)
+
+        # mutate every trailer dictionary /Size and /Prev
+        for t in re.finditer(rb"trailer\s*<<(.*?)>>", bs, re.DOTALL):
+            ds, de = t.start(1), t.end(1)
+            dict_bytes = bytearray(bs[ds:de])
+            msize = re.search(rb"/Size\s+(\d+)", dict_bytes)
+            if msize:
+                self._replace_span(
+                    dict_bytes,
+                    msize.start(1),
+                    msize.end(1),
+                    str(random.choice([0, random.randint(1, 10), 2**31 - 1])).encode(
+                        "ascii"
+                    ),
+                )
+            if random.random() < 0.4:
+                # corrupt /Prev if present or inject one
+                mprev = re.search(rb"/Prev\s+(\d+)", dict_bytes)
+                if mprev:
+                    self._replace_span(
+                        dict_bytes,
+                        mprev.start(1),
+                        mprev.end(1),
+                        str(random.randint(0, len(buf) * 2)).encode("ascii"),
+                    )
+                else:
+                    inject = f"/Prev {random.randint(0, len(buf)*2)} ".encode("ascii")
+                    self._replace_span(dict_bytes, 0, 0, inject)
+            self._replace_span(buf, ds, de, bytes(dict_bytes))
+
+        pass
+
+    def b_mutate_all_xref_stream(self, buf: bytearray):
+        """Mutate dictionaries of every /Type /XRef stream and flip bytes in payload."""
+        bs = bytes(buf)
+        pat = re.compile(
+            rb"(\d+)\s+(\d+)\s+obj\s*(<<.*?/Type\s*/XRef.*?>>)\s*stream\s*\r?\n",
+            re.DOTALL,
+        )
+        for m in pat.finditer(bs):
+            dstart, dend = m.start(3), m.end(3)
+            dict_bytes = bytearray(bs[dstart:dend])
+            # mutate /W
+            w = re.search(rb"/W\s*\[([^\]]+)\]", dict_bytes)
+            if w and random.random() < 0.9:
+                new_w = f"/W [{random.randint(0,4)} {random.randint(0,4)} {random.randint(0,4)}]".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, w.start(), w.end(), new_w)
+            # mutate /Index
+            idx = re.search(rb"/Index\s*\[([^\]]+)\]", dict_bytes)
+            if idx and random.random() < 0.6:
+                new_idx = f"/Index [{random.randint(0,10)} {random.randint(0, 2**20)}]".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, idx.start(), idx.end(), new_idx)
+            # mutate /Size
+            sz = re.search(rb"/Size\s+(\d+)", dict_bytes)
+            if sz and random.random() < 0.8:
+                self._replace_span(
+                    dict_bytes,
+                    sz.start(1),
+                    sz.end(1),
+                    str(
+                        random.choice([0, random.randint(1, 1000), 2**31 - 1])
+                    ).encode("ascii"),
+                )
+            # maybe inject bogus key
+            if random.random() < 0.3:
+                inject = f"/BadKey{random.randint(0,999)} {random.randint(0,2**31-1)} ".encode(
+                    "ascii"
+                )
+                self._replace_span(dict_bytes, 0, 0, inject)
+            self._replace_span(buf, dstart, dend, bytes(dict_bytes))
+            # mutate stream payload
+            after = bytes(buf[dend : dend + 5000])
+            sh = re.search(rb">>\s*stream\s*\r?\n", after)
+            if not sh:
+                continue
+            stream_hdr_end = dend + sh.end()
+            em = re.search(rb"\r?\nendstream", bytes(buf[stream_hdr_end:]))
+            if not em:
+                continue
+            sstart = stream_hdr_end
+            send = stream_hdr_end + em.start()
+            payload = bytearray(buf[sstart:send])
+            if payload:
+                flips = random.randint(1, min(64, len(payload) // 128 + 1))
+                for _ in range(flips):
+                    i = random.randrange(len(payload))
+                    payload[i] ^= random.getrandbits(8)
+                self._replace_span(buf, sstart, send, bytes(payload))
+                # desync /Length occasionally
+                if random.random() < 0.5:
+                    local = bytes(buf[dstart : dstart + 2000])
+                    lm = re.search(rb"/Length\s+(\d+)", local)
+                    if lm:
+                        new_len = str(
+                            random.choice(
+                                [
+                                    0,
+                                    len(payload) // 2,
+                                    len(payload) + random.randint(1, 10000),
+                                    2**31 - 1,
+                                ]
+                            )
+                        ).encode("ascii")
+                        self._replace_span(
+                            buf, dstart + lm.start(1), dstart + lm.end(1), new_len
+                        )
