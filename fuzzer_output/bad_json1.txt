@@ -1,5 +1,5 @@
 {
-    "len": 121e9999,
-    "input":-"\12345678901234567890 "AAAABBBBCCCC\\\\",
+    "len"-123456"\uZZZZ"78901234567890: 12,
+    "input": "AAAABBBBCCCC",
     "more_data": ["a", "bb"]
 }

@@ -182,14 +182,10 @@ class fileTypeCheck:
         try:
             with open(input_file_path, "rb") as f:
                 blob = f.read()
-                f.seek(0)
-                f.seek(0, os.SEEK_END)
-                file_size = f.tell()
-                # NOTE: CHECK decoding format here
-                blob_str = blob.decode("utf-8")
         except OSError as e:
             print(f"Error reading input file: {e}", file=sys.stderr)
             sys.exit(2)
+        file_size = len(blob)
         # DO NOT READ IN PARTS OF THE FILE OTHERWISE PARSER NO WORK
         # TODO: CHECK IF WE NEED IF INPUT FILE SIZE CAN BE BIG
         # IS PROBLEM, ASK LECTURER
@@ -201,17 +197,20 @@ class fileTypeCheck:
             return "jpg"
         elif self._is_pdf(blob):
             return "pdf"
-        elif self._is_xml(blob_str):
+        try:
+            blob_str = blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return "plaintext"
+        if self._is_xml(blob_str):
             return "xml"
         elif self._is_json(blob_str):
             return "json"
         # CSV has structural checks and heuristic
         elif self._is_csv(blob_str):
             return "csv"
-        elif self._is_xml(blob_str):
-            return "xml"
         elif self._is_plaintext(blob):
             return "plaintext"
+            
         # TODO: CHECK OTHER FILE TYPES LATE
         else:
             return "plaintext"

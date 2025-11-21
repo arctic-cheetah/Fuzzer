@@ -38,8 +38,19 @@ def main():
     binary_path = mount_point("binaries")
 
     # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
-    input_arr = [ example_inputs + "/csv1.txt",example_inputs + "/csv2.txt",example_inputs + "/json1.txt",example_inputs + "/json2.txt",example_inputs + "/xml1.txt",example_inputs + "/xml2.txt",example_inputs + "/xml3.txt",example_inputs + "/plaintext1.txt",example_inputs + "/plaintext2.txt", example_inputs + "/plaintext3.txt"]
+# example_inputs + "/plaintext1.txt", 
+    input_arr = [example_inputs + "/intro",example_inputs + "/intro",example_inputs + "/intro",example_inputs + "/intro",example_inputs + "/intro",example_inputs + "/intro",example_inputs + "/intro", example_inputs + "/csv1.txt",example_inputs + "/csv2.txt",example_inputs + "/json1.txt",example_inputs + "/json2.txt",example_inputs + "/xml1.txt",example_inputs + "/xml2.txt",example_inputs + "/xml3.txt",example_inputs + "/plaintext1.txt",example_inputs + "/plaintext2.txt", example_inputs + "/plaintext3.txt"]
     bin_arr = [
+        #binary_path + "/ftx",
+        binary_path + "/tetris",
+        #binary_path + "/image-viewer",
+        #binary_path + "/piv_it",
+        binary_path + "/roporshellcode",
+        binary_path + "/stack-dump2",
+        binary_path + "/stack-dump",
+        binary_path + "/bestsecurity",
+        binary_path + "/blind",
+        binary_path + "/jump",
         binary_path + "/csv1",
         binary_path + "/csv2",
         binary_path + "/json1",
