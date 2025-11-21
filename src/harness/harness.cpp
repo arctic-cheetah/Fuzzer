@@ -27,8 +27,6 @@
 #include <stack>
 #include <thread>
 
-#include "cppzmq/zmq.hpp"
-
 #include <sys/ptrace.h>
 
 #include "hash.h"
@@ -46,6 +44,7 @@
 #define PROCESS_TIMEOUT 500
 
 struct job_result get_crash_result_for_pid(int pid, int sig, elf_exe_cache &cache, std::string binary_path);
+void write_dump(std::ostream &dumpfile, const job_result &result);
 
 struct job_result {
     int return_code;
@@ -111,7 +110,7 @@ std::map<std::string, uint64_t> get_registers(pid_t pid) {
     };
 }
 
-pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary, int pipe_fd){
+pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary){
     char *real_path = realpath(binary.c_str(), nullptr);
     if (!real_path) {
         perror("realpath");
@@ -129,11 +128,13 @@ pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary, int pipe_fd)
     }
 
     if (pid == 0) {
-        raise(SIGSTOP);
+        if (ptrace(PTRACE_TRACEME, 0, nullptr, nullptr) < 0) {
+            perror("traceme");
+            exit(1);
+        }
 
         // replace stdout with /dev/null for now
         close(STDOUT_FILENO);
-        close(STDERR_FILENO);
         int dev_null = open("/dev/null", O_WRONLY);
         if (dev_null == -1) {
             perror("open /dev/null");
@@ -141,16 +142,56 @@ pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary, int pipe_fd)
         }
 
         dup2(dev_null, STDOUT_FILENO);
-        dup2(dev_null, STDERR_FILENO);
         close(dev_null);
-
-        close(STDIN_FILENO);
-        dup2(pipe_fd, STDIN_FILENO);
-        close(pipe_fd);
 
         execl(binary.c_str(), binary.c_str(), nullptr);
         perror("execl");
         exit(EXIT_FAILURE);
+    } else {
+        for (;;) {
+            int status;
+            auto res = waitpid(pid, &status, 0);
+            if (res == -1) {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+            }
+
+            std::optional<job_result> result;
+
+            if (WIFSTOPPED(status)) {
+                auto sig = WSTOPSIG(status);
+
+                if (sig == SIGSEGV || sig == SIGABRT || sig == SIGILL) {
+                    debug_print("pid {} crashed with signal: {}\n", pid, strsignal(sig));
+
+                    result = get_crash_result_for_pid(pid, sig, cache, binary);
+
+                    ptrace(PTRACE_KILL, pid, nullptr, nullptr);
+                    debug_print("Killed pid: {} after crash\n", pid);
+                } else if (sig == SIGTRAP) {
+                    ptrace(PTRACE_CONT, pid, nullptr, 0);
+                    continue;  
+                } else if (sig == SIGSTOP) {
+                    ptrace(PTRACE_CONT, pid, nullptr, 0);
+                    continue;
+                } else {
+                    debug_print("Other signal: {}\n", strsignal(sig));
+                    exit(0);
+                }
+            } else if (WIFSIGNALED(status)) {
+                exit(0);
+            } else if (WIFEXITED(status)) {
+                debug_print("pid {} exited with status: {}\n", pid, WEXITSTATUS(status));
+
+                exit(0);
+            }
+
+            if (result) {
+                write_dump(std::cout, *result);
+
+                exit(1);
+            }
+        }
     }
 
     debug_print("Started process with PID: {}\n", pid);
@@ -158,12 +199,6 @@ pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary, int pipe_fd)
 }
 
 void write_dump(std::ostream &dumpfile, const job_result &result) {
-    if (result.status == job_result::exit) {
-        // no need to dump successful exits
-        dumpfile << std::format("{}", result.pid);
-        return;
-    }
-
     std::print(dumpfile, R"({{ "pid": {}, "status": "{}", )", result.pid,
                result.status == job_result::exit ? "exited" :
                result.status == job_result::timeout ? "timeout" : "signal");
@@ -205,230 +240,9 @@ void write_dump(std::ostream &dumpfile, const job_result &result) {
 }
 
 int main(int argc, char **argv) {
-    zmq::context_t ctx{1};
-    zmq::socket_t socket{ctx, zmq::socket_type::rep};
-    zmq::socket_t event_socket{ctx, zmq::socket_type::pub};
-
-    socket.bind("ipc:///tmp/fuzzer");
-    event_socket.bind("ipc:///tmp/fuzzer-events");
-
-    std::map<std::string, std::thread> threads;
-
-    elf_exe_cache cache;
-
-    std::mutex pid_mutex;
-    std::condition_variable should_waitpid;
-    std::condition_variable pid_handled;
-
-    std::list<pid_t> running_pids;
-    std::unordered_map<pid_t, bool> attached;
-    std::unordered_map<pid_t, std::string> pid_to_binary;
-
-    std::mutex results_mutex;
-    std::condition_variable pending_results;
-    std::deque<job_result> results;
-
-    auto waitpid_loop = [&]() {
-        for (;;) {
-            {
-                std::unique_lock lock{pid_mutex};
-                should_waitpid.wait(lock, [&]() {
-                    return !running_pids.empty();
-                });
-            }
-
-            int status;
-            debug_print("waiting for children\n");
-            pid_t pid = waitpid(-1, &status, WUNTRACED);
-            if (pid < 0) {
-                if (errno == ECHILD) {
-                    // no more child processes
-                    debug_print("No child processes\n");
-                    continue;
-                } else {
-                    perror("waitpid");
-                    exit(1);
-                }
-            }
-
-            if (pid == 0) {
-                continue;
-            }
-            
-            debug_print("waitpid got pid: {}\n", pid);
-
-            std::optional<job_result> result;
-
-            if (WIFEXITED(status)) {
-                debug_print("pid {} exited with status: {}\n", pid, WEXITSTATUS(status));
-
-                result = job_result::exited(WEXITSTATUS(status), pid);
-            } else if (WIFSTOPPED(status)) {
-                auto sig = WSTOPSIG(status);
-                debug_print("pid {} stopped by signal: {}\n", pid, strsignal(sig));
-
-                std::unique_lock lock{pid_mutex};
-                if (!attached[pid]) {
-                    if (sig != SIGSTOP) {
-                        ptrace(PTRACE_CONT, pid, nullptr, sig);
-                        continue;
-                    }
-
-                    debug_print("Attaching to pid: {}\n", pid);
-                    if (ptrace(PTRACE_SEIZE, pid, nullptr, 0) < 0) {
-                        perror("ptrace seize");
-                        exit(1);
-                    }
-
-                    attached[pid] = true;
-                    ptrace(PTRACE_CONT, pid, nullptr, 0);
-                    continue;
-                }
-                lock.unlock();
-
-                if (sig == SIGSEGV || sig == SIGABRT || sig == SIGFPE) {
-                    debug_print("pid {} crashed with signal: {}\n", pid, strsignal(sig));
-
-                    result = get_crash_result_for_pid(pid, sig, cache, pid_to_binary[pid]);
-
-                    ptrace(PTRACE_KILL, pid, nullptr, nullptr);
-                    debug_print("Killed pid: {} after crash\n", pid);
-                } else if (sig == SIGTRAP) {
-                    ptrace(PTRACE_CONT, pid, nullptr, 0);
-                    continue;  
-                } else if (sig == SIGSTOP) {
-                    ptrace(PTRACE_CONT, pid, nullptr, 0);
-                    continue;
-                } else {
-                    debug_print("Continuing after signal: {}\n", strsignal(sig));
-                    ptrace(PTRACE_CONT, pid, nullptr, sig);
-                    continue;
-                }
-            } else if (WIFSIGNALED(status)) {
-                auto sig = (WTERMSIG(status));
-                debug_print("pid {} exited with signal: {}\n", pid, strsignal(sig));
-
-                // 'when a program is terminated by an uncaught signal,
-                // the exit status is calculated as 128 + <signal number>'
-                result = job_result::exited(128 + sig, pid);
-            }
-
-            if (result) {
-                {
-                    std::unique_lock lock{results_mutex};
-                    results.push_back(*result);
-                    lock.unlock();
-                    pending_results.notify_one();
-                }
-
-                {
-                    std::unique_lock lock{pid_mutex};
-                    running_pids.remove(pid);
-                    attached.erase(pid);
-                    pid_to_binary.erase(pid);
-                    pid_handled.notify_one();
-                }
-            }
-        }
-    };
-
-    auto broadcast_loop = [&]() {
-        for (;;) {
-            std::unique_lock lock{results_mutex};
-            pending_results.wait(lock, [&]() {
-                return !results.empty();
-            });
-
-            auto result = results.front();
-            results.pop_front();
-            lock.unlock();
-
-            auto msg = std::string{};
-            {
-                auto s = std::ostringstream{};
-                write_dump(s, result);
-                msg = s.str();
-            }
-
-            debug_print("Broadcasting event: {}\n", msg);
-
-            zmq::message_t event_msg{msg.size()};
-            memcpy(event_msg.data(), msg.data(), msg.size());
-
-            event_socket.send(event_msg, zmq::send_flags::none);
-        }
-    };
-
-    std::thread waitpid_thread = std::thread(waitpid_loop);
-    std::thread broadcast_thread = std::thread(broadcast_loop);
-
-    debug_print("Harness is ready to receive jobs\n");
-    for (;;) {
-        zmq::message_t request{IPC_MSG_LEN};
-
-        // Wait for the next request from client
-        auto res = socket.recv(request, zmq::recv_flags::none);
-        if (!res) {
-            // probably got an EAGAIN
-            continue;
-        }
-
-        auto size = res.value();
-        assert(size <= IPC_MSG_LEN);
-
-        // <cmd>;<args>
-        auto msg = std::string(static_cast<char *>(request.data()), size);
-
-        debug_print("Received message: {}\n", msg);
-        
-        // "exec;<binary>;<pipe>"
-        auto delimiter_pos = msg.find(';');
-        auto cmd = msg.substr(0, delimiter_pos);
-        
-        if (cmd == "exec") {
-            zmq::message_t reply;
-            auto next_delim = msg.find(';', delimiter_pos + 1);
-            auto binary = msg.substr(delimiter_pos + 1, next_delim - delimiter_pos - 1);
-            auto pipe_name = msg.substr(next_delim + 1);
-
-            int fd = open(pipe_name.c_str(), O_RDONLY);
-            if (fd < 0) {
-                perror("open pipe");
-                exit(1);
-            }
-
-            pid_t pid;
-            {
-                std::unique_lock lock{pid_mutex};
-
-                //pid = execute_task_ptrace(cache, binary, fd);
-                pid = 1;
-                attached[pid] = false;
-                close(fd);
-
-                if (pid == 0) { // failed
-                    socket.send(zmq::message_t("0"), zmq::send_flags::none);
-                    continue;
-                }
-
-                std::unique_lock result_lock{results_mutex};
-                results.push_back(job_result::exited(0, pid));
-                pending_results.notify_one();
-
-                //running_pids.push_back(pid);
-               // pid_to_binary[pid] = binary;
-                //should_waitpid.notify_one();
-            }
-
-            // reply with the pid
-            reply = zmq::message_t(std::to_string(pid));
-
-            // Send reply back to client
-            socket.send(reply, zmq::send_flags::none);
-        }
-    }
-
-    return 0;
+    elf_exe_cache c{};
+    execute_task_ptrace(c, argv[1]); 
+    return 0;  
 }
 
 std::vector<memory_region> get_memory_regions(pid_t pid) {
