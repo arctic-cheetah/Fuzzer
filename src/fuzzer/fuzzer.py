@@ -14,6 +14,5 @@ def make_fuzzer(file_type: str, path_to_input: str, binary_path: str):
     elif ft == "plaintext" : return Plaintext_Mutational_Fuzzer(path_to_input, binary_path)
     elif ft == "elf": return ELF_Mutational_Fuzzer(path_to_input, binary_path)
     elif ft == "jpg" : return JPEG_Fuzzer(path_to_input, binary_path)
->>>>>>> upstream/jpeg-fuzzer
     else:
         raise NotImplementedError(f"unsupported file type: {file_type}")
