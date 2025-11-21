@@ -1,4 +1,11 @@
 #!/usr/bin/env -S uv run --script
+
+# /// script
+# dependencies = [
+#   "pyzmq"
+# ]
+# ///
+
 """
 this is the entry point of the fuzzer, i.e. the scheduler.
 
@@ -53,34 +60,11 @@ def main():
     ]
     test_arr = [input_arr, bin_arr]
 
-    # Env is not really neeeded
-    env = os.environ.copy()
-    env["SHM_NAME"] = shared_memory.SHM_NAME
-    env["SHM_SIZE"] = str(shared_memory.SHM_SIZE)
-    subprocess.Popen([PATH_TO_HARNESS], env=env)
-
-    # Wait for harness to allocate memory
-    sleep(0.01)
-
-    # 2) Read from shm
-    fd = os.open(shared_memory.SHM_PATH, os.O_RDWR)
-    mm = mmap.mmap(fd, shared_memory.SHM_SIZE)
-    # print(os.getcwd())
-
-    shm = shared_memory.SharedMemoryStruct.from_buffer(mm)
-
-    # print(f"Input_len: {shm.input_len}")
-    # print(f"Process_flag: {shm.process_flag}")
-    # print(f"Return_code_flag: {shm.return_code_flag}")
-    # print(f"Bitmap: {shm.bitmap}")
-    # print(f"Input: {shm.input}")
-
     # 3) Mutation/Fuzz here
     check_file_type = fileTypeCheck()
 
     # TODO: Parallelise here later!
     for x in range(0, len(bin_arr)):
-
         in_data = input_arr[x]
         binary_path = bin_arr[x]
         # TODO: CALL FUZZER HERE

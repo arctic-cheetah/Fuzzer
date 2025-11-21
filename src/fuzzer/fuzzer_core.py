@@ -1,6 +1,9 @@
 import os, re, random, subprocess
+from globals import PATH_TO_HARNESS
 from typing import List, Callable
 from globals import mount_point
+
+import json
 
 NUM_TO_RUN = 50_000
 TIMEOUT = 1
@@ -38,17 +41,20 @@ class Fuzzer:
                 else:
                     data = self.mutate(seed)
                 proc = subprocess.run(
-                    [self.binary_path],
+                    [PATH_TO_HARNESS, self.binary_path],
                     input=data,
                     capture_output=True,
                     timeout=TIMEOUT,
                     check=False,
                 )
                 rc = proc.returncode
-                if rc < 0:
+
+                if rc != 0:
+                    info = json.loads(proc.stdout)
                     print("________________________________")
-                    print(f"Crashed at the {x} input")
-                    print({"exit_code": rc, "stderr": proc.stderr})
+                    print(f"Crashed at the {x} input. Stack trace:")
+                    for x in info["stack_trace"]:
+                        print(f"{hex(x[0])} + <{x[1]}>")
                     self.log_crash(data)
                     print("________________________________")
                     return

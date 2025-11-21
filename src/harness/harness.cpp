@@ -1,8 +1,16 @@
+#include <assert.h>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <fstream>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 #include <unistd.h>
-#include <cstdint>
-#include <atomic>
+#include <stdint.h>
+#include <map>
+#include <unordered_map>
 #include <string.h>
 #include <fcntl.h>
 #include <iostream>
@@ -10,99 +18,348 @@
 #include <sys/stat.h>
 #include <iostream>
 #include "harness.h"
-#include <errno.h>
-#include <qemu-plugin.h>
+#include <sys/wait.h>
+#include <sys/user.h>
+#include <print>
+#include <list>
+#include <elf.h>
+#include <vector>
+#include <stack>
+#include <thread>
 
-#define MAX_DATA_LEN (1 << 20) // 1MB
-#define BIT_MAP_LEN (1 << 16)  // 64KB
+#include <sys/ptrace.h>
 
-// Shared memory structure
-typedef struct
-{
-    uint32_t input_len;
-    uint32_t process_flag; // represents the status of the current input
-    // process_flag values:
-    // 0=new_cov
-    // 1=new_input
-    // 2=crash
-    // 3=timeout
-    // 4=exit
-    uint32_t return_code_flag;   // represents the return code of the executed input
-    uint32_t exec_id;            // Identify the input type
-    uint8_t bitmap[BIT_MAP_LEN]; // Bitmap represents code coverage (need to set to zero)
-    uint8_t input[MAX_DATA_LEN]; // input data
-} shm_t;
+#include "hash.h"
+#include "elf.h"
+#include "region.h"
 
-// TODO: SHOULD THIS PATH BE STATIC?
-// TODO; CHECK IF SHM PATH IS CORRECT
-static const char *SHM_PATH = "/comp6447_fuzzer_shm";
+#ifdef DEBUG
+#define debug_print(...) std::print(stderr, __VA_ARGS__)
+#else
+#define debug_print
+#endif
 
-int init_shared_memory();
+#define IPC_MSG_LEN 1024
+#define MAX_PROCCESSES 128
+#define PROCESS_TIMEOUT 500
 
-// Harness to execute test casesq
-int main(int argc, char *argv[])
-{
-    const size_t SHM_SIZE = sizeof(shm_t);
-    printf("%s\n", SHM_PATH);
-    // 1)Create or open the SHM
-    int shm_fd = shm_open(SHM_PATH, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    // Error checking
-    shm_error_check(shm_fd, SHM_SIZE);
+struct job_result get_crash_result_for_pid(int pid, int sig, elf_exe_cache &cache, std::string binary_path);
+void write_dump(std::ostream &dumpfile, const job_result &result);
 
-    // 3) Get a typed view of the SHM
-    shm_t *shm_ptr = (shm_t *)mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+struct job_result {
+    int return_code;
+    int pid;
 
-    // 4) Initialise shm once
-    // TODO: Check error checking here!
-    memset(shm_ptr, 0, SHM_SIZE);
-    shm_ptr->input_len = 1;
-    shm_ptr->process_flag = 0;
-    shm_ptr->return_code_flag = 0;
-    shm_ptr->exec_id = 0;
-    memset(&shm_ptr->input, 0xFF, MAX_DATA_LEN);
+    std::map<std::string, uint64_t> registers;
+    std::vector<memory_region> regions;
 
-    // 5) Make process_flag and return_code_flag atomic C++ 20 compliant
-    auto *process_flag = reinterpret_cast<std::atomic<uint32_t> *>(&shm_ptr->process_flag);
-    auto *return_code_flag = reinterpret_cast<std::atomic<uint32_t> *>(&shm_ptr->return_code_flag);
+    enum {
+        exit,
+        timeout,
+        signal,
+    } status;
 
-    // 6) Read from objdump the code regions to obtain disassembly code
+    struct {
+        int signal;
+        std::map<std::string, uint64_t> registers;
+        std::list<std::pair<uint64_t, std::string>> stack_trace;
+        uint64_t hash;
+    } crash_info;
 
-    // 8)Event loop here to do tasks!
-    std::cout << "Harness is running!\n"
-              << std::endl;
-    while (true)
-    {
-        // Wait for the fuzzer to write input and set process_flag
-        while (process_flag->load() != 1 && process_flag->load() != 4)
-            ;
-
-        // Exit program
-        if (process_flag->load() == 4)
-            break;
-
-        std::cout << "New input obtained from fuzzer!\n";
-        // 9) TODO: Execute the provided binary! via QEMU
-
-        process_flag->store(0); // Send new coverage
+    static job_result exited(int return_code, int pid) {
+        return job_result{
+            .return_code = return_code,
+            .pid = pid,
+            .status = exit
+        };
     }
-    // TODO: When to close fd? When we send data to the fuzzer
-    close(shm_fd);
-    // remove SHM_PATH
-    shm_unlink(SHM_PATH);
-    return 0;
+
+    static job_result timed_out(int pid) {
+        return job_result{
+            .pid = pid,
+            .status = timeout
+        };
+    }
+
+    static job_result crashed(int signal, std::map<std::string, uint64_t> registers,
+                             std::list<std::pair<uint64_t, std::string>> stack_trace, uint64_t hash, int pid) {
+        return job_result{
+            .pid = pid,
+            .status = job_result::signal,
+            .crash_info = {
+                .signal = signal,
+                .registers = registers,
+                .stack_trace = stack_trace,
+                .hash = hash
+            }
+        };
+    }
+};
+
+std::map<std::string, uint64_t> get_registers(pid_t pid) {
+    auto regs = user_regs_struct{};
+    ptrace(PTRACE_GETREGS, pid, nullptr, &regs);
+
+    return {
+        {"rax", regs.rax}, {"rbx", regs.rbx}, {"rcx", regs.rcx},
+        {"rdx", regs.rdx}, {"rsi", regs.rsi}, {"rdi", regs.rdi},
+        {"rbp", regs.rbp}, {"rsp", regs.rsp}, {"rip", regs.rip},
+        {"r8", regs.r8}, {"r9", regs.r9}, {"r10", regs.r10},
+        {"r11", regs.r11}, {"r12", regs.r12}, {"r13", regs.r13},
+        {"r14", regs.r14}, {"r15", regs.r15}
+    };
 }
 
-void shm_error_check(int shm_fd, const size_t SHM_SIZE)
-{
-    if (shm_fd == -1)
-    {
-        fprintf(stderr, "shm_open failed: %s\n", strerror(errno));
+pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary){
+    char *real_path = realpath(binary.c_str(), nullptr);
+    if (!real_path) {
+        perror("realpath");
         exit(EXIT_FAILURE);
     }
-    // 2) Set the size of the SHM
-    if (ftruncate(shm_fd, SHM_SIZE) == -1)
-    {
-        perror("SHM truncate and setting file size failed!\n");
+
+    auto exe = cache.get_executable(real_path);
+    
+    free(real_path);
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
         exit(EXIT_FAILURE);
     }
+
+    if (pid == 0) {
+        if (ptrace(PTRACE_TRACEME, 0, nullptr, nullptr) < 0) {
+            perror("traceme");
+            exit(1);
+        }
+
+        // replace stdout with /dev/null for now
+        close(STDOUT_FILENO);
+        int dev_null = open("/dev/null", O_WRONLY);
+        if (dev_null == -1) {
+            perror("open /dev/null");
+            exit(EXIT_FAILURE);
+        }
+
+        dup2(dev_null, STDOUT_FILENO);
+        close(dev_null);
+
+        execl(binary.c_str(), binary.c_str(), nullptr);
+        perror("execl");
+        exit(EXIT_FAILURE);
+    } else {
+        for (;;) {
+            int status;
+            auto res = waitpid(pid, &status, 0);
+            if (res == -1) {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+            }
+
+            std::optional<job_result> result;
+
+            if (WIFSTOPPED(status)) {
+                auto sig = WSTOPSIG(status);
+
+                if (sig == SIGSEGV || sig == SIGABRT || sig == SIGILL || sig == SIGFPE) {
+                    debug_print("pid {} crashed with signal: {}\n", pid, strsignal(sig));
+
+                    result = get_crash_result_for_pid(pid, sig, cache, binary);
+
+                    ptrace(PTRACE_KILL, pid, nullptr, nullptr);
+                    debug_print("Killed pid: {} after crash\n", pid);
+                } else if (sig == SIGTRAP) {
+                    ptrace(PTRACE_CONT, pid, nullptr, 0);
+                    continue;  
+                } else if (sig == SIGSTOP) {
+                    ptrace(PTRACE_CONT, pid, nullptr, 0);
+                    continue;
+                } else {
+                    debug_print("Other signal: {}\n", strsignal(sig));
+                    exit(0);
+                }
+            } else if (WIFSIGNALED(status)) {
+                exit(0);
+            } else if (WIFEXITED(status)) {
+                debug_print("pid {} exited with status: {}\n", pid, WEXITSTATUS(status));
+
+                exit(0);
+            }
+
+            if (result) {
+                write_dump(std::cout, *result);
+
+                exit(1);
+            }
+        }
+    }
+
+    debug_print("Started process with PID: {}\n", pid);
+    return pid;
+}
+
+void write_dump(std::ostream &dumpfile, const job_result &result) {
+    std::print(dumpfile, R"({{ "pid": {}, "status": "{}", )", result.pid,
+               result.status == job_result::exit ? "exited" :
+               result.status == job_result::timeout ? "timeout" : "signal");
+
+    if (result.status == job_result::exit) {
+        std::print(dumpfile, R"("return_code": {} )", result.return_code);
+    } else if (result.status == job_result::timeout) {
+        // nothing more to add
+    } else if (result.status == job_result::signal) {
+        std::print(dumpfile, R"("signal": {}, "hash": "{:x}", "registers": {{)",
+                   result.crash_info.signal, result.crash_info.hash);
+
+        bool first = true;
+        for (const auto& [reg, value] : result.crash_info.registers) {
+            if (!first) {
+                std::print(dumpfile, ", ");
+            } else {
+                first = false;
+            }
+
+            std::print(dumpfile, R"("{}": {})", reg, value);
+        }
+        std::print(dumpfile, R"(}}, "stack_trace": [)");
+
+        first = true;
+        for (const auto& [addr, name] : result.crash_info.stack_trace) {
+            if (!first) {
+                std::print(dumpfile, ", ");
+            } else {
+                first = false;
+            }
+
+            std::print(dumpfile, R"([{}, "{}"])", addr, name);
+        }
+        std::print(dumpfile, R"(] )");
+    }
+
+    std::print(dumpfile, R"(}})");
+}
+
+int main(int argc, char **argv) {
+    elf_exe_cache c{};
+    execute_task_ptrace(c, argv[1]); 
+    return 0;  
+}
+
+std::vector<memory_region> get_memory_regions(pid_t pid) {
+    std::vector<memory_region> regions;
+    std::ifstream maps_file(std::format("/proc/{}/maps", pid));
+    std::string line;
+
+    while (std::getline(maps_file, line)) {
+        memory_region region;
+        uint64_t offset;
+
+        // split the line by spaces
+        auto parts = std::vector<std::string>{};
+        std::string part;
+        auto start = line.begin();
+        auto it = line.begin();
+        while (it != line.end()) {
+            auto start = it;
+            while (it != line.end() && *it != ' ') {
+                it++;
+            }
+            parts.push_back(std::string(start, it));
+            while (it != line.end() && *it == ' ') {
+                it++;
+            }
+        }
+
+        sscanf(parts[0].c_str(), "%lx-%lx", &region.start, &region.end);
+        sscanf(parts[2].c_str(), "%lx", &region.offset);
+        region.permissions = parts[1];
+
+        // some mappings don't have a pathname??
+        region.pathname = parts.size() >= 6 ? parts[5] : "";
+
+        regions.push_back(region);
+    }
+
+    return regions;
+}
+
+job_result get_crash_result_for_pid(int pid, int sig, elf_exe_cache &cache, std::string binary_path) {
+    auto *exe = cache.get_executable(binary_path);
+    if (!exe) {
+        debug_print("Failed to get executable for pid: {}\n", pid);
+        exit(1);
+    }
+
+    auto registers = get_registers(pid);
+    auto regions = get_memory_regions(pid);
+
+    auto rbp = registers["rbp"];
+    auto rsp = registers["rsp"];
+
+    // make a trace
+    std::list<uint64_t> stack_trace {registers["rip"]};
+    
+    uint64_t current_rbp = rbp;
+    int max_frames = 128;
+    while (current_rbp != 0) {
+        debug_print("Reading stack frame at RBP: {:#x}\n", current_rbp);
+        auto return_address = ptrace(PTRACE_PEEKDATA, pid, current_rbp + 8, nullptr);
+        stack_trace.push_back(return_address);
+        
+        auto new_rbp = ptrace(PTRACE_PEEKDATA, pid, current_rbp, nullptr);
+        if (new_rbp == current_rbp) {
+            break;
+        }
+        current_rbp = new_rbp;
+
+        if (--max_frames == 0) {
+            debug_print("Max stack frames reached\n");
+            break;
+        }
+    }
+
+    std::list<std::pair<uint64_t, std::string>> trace_offsets;
+    for (const auto& addr : stack_trace) {
+        auto *region = region_for_address(regions, addr);
+        if (region) {
+            trace_offsets.push_back({
+                addr - region->start + region->offset,
+                region->pathname
+            });
+        } else {
+            trace_offsets.push_back({addr, "unknown"});
+        }
+    }
+
+    auto hash = hash_trace(trace_offsets);
+
+    debug_print("Stack trace hash: {:#x}\n", hash);
+
+    FILE *auxv_file = fopen(std::format("/proc/{}/auxv", pid).c_str(), "rb");
+    if (!auxv_file) {
+        perror("fopen auxv");
+        exit(1);
+    }
+    
+    std::vector<Elf64_auxv_t> auxv_data;
+
+    size_t read_bytes;
+    Elf64_auxv_t entry;
+    while ((read_bytes = fread(&entry, sizeof(Elf64_auxv_t), 1, auxv_file)) == 1){
+        auxv_data.push_back(entry);
+    }
+
+    auto auxv = get_important_auxv(auxv_data);
+    auto image_base = figure_out_image_base(*exe, auxv);
+
+    return job_result::crashed(sig, registers, trace_offsets, hash, pid);
+}
+
+memory_region *region_for_address(std::vector<memory_region> &regions, uint64_t address) {
+    for (auto &region : regions) {
+        if (address >= region.start && address < region.end) {
+            return &region;
+        }
+    }
+    return nullptr;
 }
