@@ -26,7 +26,7 @@ class JPEG_Fuzzer(Fuzzer):
         num -= 1
         return mutation if num <= 0 else self.mutate(mutation)
 
-    def make_payload(self, seed)
+    def make_payload(self, seed):
         if not self.corpus:
             self.corpus += [JPEG(seed)]
         img = random.choice(self.corpus)
