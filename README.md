@@ -1,14 +1,15 @@
-# How to run the container
+# run the fuzzer
+please use the provided `run_fuzzer.sh` script :)
 
-## Build and run the container
 
+## Run with compose *
 Since the image copies the source directories, if you modify the `src/` file, please build.
 
 ```
 docker compose up --build
 ```
-
 Docker compose lets us run the container with the correct mounts :)
+may not be updated*
 
 # template
 
