@@ -49,7 +49,7 @@ RUN mkdir /fuzzer_output
 
 # Compile it
 # Build harness
-RUN g++ -std=c++2b -o /app/src/harness/harness /app/src/harness/harness.cpp
+RUN rm -f /app/src/harness/harness && g++ -std=c++2b -O3 -o /app/src/harness/harness /app/src/harness/harness.cpp
 
 # Run it.
 CMD ["uv", "run", "fuzzer/main.py"]
