@@ -1,0 +1,3 @@
+[submodule "src/harness/cppzmq"]
+	path = src/harness/cppzmq
+	url = git@github.com:zeromq/cppzmq.git
