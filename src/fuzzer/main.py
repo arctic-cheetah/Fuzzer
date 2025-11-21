@@ -50,7 +50,7 @@ def main():
     input_arr = []
     for filename in os.listdir(binary_path):
         bin_arr.append(os.path.join(directory_path, filename))
-        example_inputs.append(os.path.join(example_inputs, filename))
+        input_arr.append(os.path.join(example_inputs, filename))
     
     test_arr = [input_arr, bin_arr]
 
