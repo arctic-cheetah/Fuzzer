@@ -23,7 +23,7 @@ Source code and other notes can be found here:
 
 On the high level, the structure of our fuzzer can be approximated by the following system diagram:
 
-![](fuzzer-structure.png)
+![fuzzer structure diagram](fuzzer-structure.png)
 
 ## System Overview
 
@@ -88,21 +88,17 @@ Framework is modular:
 
 Mutators with format file specified strategy:
 
-- JSON:
-    - unbalanced braces
-    - duplicate keys
-    - broken escapes
-    - illegal Unicode
-    - extreme nesting
-    - oversized strings.
+| filetype  | JSON                                                                                                                          | CSV                                                                                                                                           | XML | Plaintext |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --- | --------- |
+| strategy  |                                                                                                                               |                                                                                                                                               |     |           |
+| mutations | - unbalanced braces<br>- duplicate keys<br>- broken escapes<br>- illegal Unicode<br>- extreme nesting<br>- oversized strings. | - inconsistent columns<br>- unusual delimiters<br>- long UTF-8 sequences<br>- repeated patterns<br>- random byte insertions<br>- truncations. |     |           |
 
-- CSV:
-    - inconsistent columns
-    - unusual delimiters
-    - long UTF-8 sequences
-    - repeated patterns
-    - random byte insertions
-    - truncations.
+More structured filetypes:
+
+| filetype  | PDF | ELF | JPEG                                                                                                                                                    |
+| --------- | --- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| strategy  |     |     |                                                                                                                                                         |
+| mutations |     |     | - maximise height and width<br>- minimse height and width<br>- randomise height and width<br>- corrupt a marker<br>- randomise number of components<br> |
 
 ## Harness
 
