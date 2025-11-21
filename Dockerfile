@@ -79,6 +79,8 @@ RUN mkdir /fuzzer_output
 # Build harness
 RUN g++ -std=c++17 -o /app/src/harness/harness /app/src/harness/harness.cpp
 
+# Install file command
+RUN apt-get update && apt-get install -y file
 
 # Run it.
 CMD ["uv", "run", "fuzzer/main.py"]

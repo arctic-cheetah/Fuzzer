@@ -1,1 +1,4 @@
+*~
+fuzzer_output/
+**/__pycache__/
 .vscode/**
