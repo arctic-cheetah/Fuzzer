@@ -51,6 +51,11 @@ RUN mkdir /fuzzer_output
 # Build harness
 RUN rm -f /app/src/harness/harness && g++ -std=c++2b -O3 -o /app/src/harness/harness /app/src/harness/harness.cpp
 
+# Install numpy
+# Build harness
+RUN python3 -m venv /app/src/venv && /app/src/venv/bin/pip3 install numpy
+
 # Run it.
-CMD ["uv", "run", "fuzzer/main.py"]
+# CMD ["uv", "run", "fuzzer/main.py"]
+CMD ["/app/src/venv/bin/python3", "fuzzer/main.py"]
 # CMD ["python3", "main.py"]
