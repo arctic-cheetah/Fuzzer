@@ -41,9 +41,9 @@ consteval inline uint64_t fnv1a_hash(const void *bytes, size_t len) {
     return detail::bytes_hash((const char *)bytes, len, detail::fnv_offset_64);
 }
 
-inline uint64_t hash_trace(const std::list<uint64_t>& trace) {
+inline uint64_t hash_trace(const std::list<std::pair<uint64_t, std::string>>& trace) {
     uint64_t hash = detail::fnv_offset_64;
-    for (const auto& addr : trace) {
+    for (const auto& [addr, name] : trace) {
         hash = detail::u64_hash(addr, hash);
     }
     return hash;

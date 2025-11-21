@@ -60,14 +60,6 @@ def main():
     ]
     test_arr = [input_arr, bin_arr]
 
-    num_threads = os.cpu_count() or 2
-    print(f"Using {num_threads} threads for fuzzing")
-    harness_process = subprocess.Popen([PATH_TO_HARNESS, str(num_threads)])
-
-    while not os.path.exists("/tmp/fuzzer-events"):
-        print("Waiting for harness to start...")
-        sleep(0.5)
-
     # 3) Mutation/Fuzz here
     check_file_type = fileTypeCheck()
 

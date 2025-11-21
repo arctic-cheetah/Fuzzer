@@ -62,7 +62,7 @@ struct job_result {
     struct {
         int signal;
         std::map<std::string, uint64_t> registers;
-        std::list<uint64_t> stack_trace;
+        std::list<std::pair<uint64_t, std::string>> stack_trace;
         uint64_t hash;
     } crash_info;
 
@@ -82,7 +82,7 @@ struct job_result {
     }
 
     static job_result crashed(int signal, std::map<std::string, uint64_t> registers,
-                             std::list<uint64_t> stack_trace, uint64_t hash, int pid) {
+                             std::list<std::pair<uint64_t, std::string>> stack_trace, uint64_t hash, int pid) {
         return job_result{
             .pid = pid,
             .status = job_result::signal,
@@ -161,7 +161,7 @@ pid_t execute_task_ptrace(elf_exe_cache &cache, std::string binary){
             if (WIFSTOPPED(status)) {
                 auto sig = WSTOPSIG(status);
 
-                if (sig == SIGSEGV || sig == SIGABRT || sig == SIGILL) {
+                if (sig == SIGSEGV || sig == SIGABRT || sig == SIGILL || sig == SIGFPE) {
                     debug_print("pid {} crashed with signal: {}\n", pid, strsignal(sig));
 
                     result = get_crash_result_for_pid(pid, sig, cache, binary);
@@ -224,14 +224,14 @@ void write_dump(std::ostream &dumpfile, const job_result &result) {
         std::print(dumpfile, R"(}}, "stack_trace": [)");
 
         first = true;
-        for (const auto& addr : result.crash_info.stack_trace) {
+        for (const auto& [addr, name] : result.crash_info.stack_trace) {
             if (!first) {
                 std::print(dumpfile, ", ");
             } else {
                 first = false;
             }
 
-            std::print(dumpfile, R"({})", addr);
+            std::print(dumpfile, R"([{}, "{}"])", addr, name);
         }
         std::print(dumpfile, R"(] )");
     }
@@ -318,30 +318,22 @@ job_result get_crash_result_for_pid(int pid, int sig, elf_exe_cache &cache, std:
         }
     }
 
-    std::list<uint64_t> trace_offsets;
+    std::list<std::pair<uint64_t, std::string>> trace_offsets;
     for (const auto& addr : stack_trace) {
         auto *region = region_for_address(regions, addr);
         if (region) {
-            trace_offsets.push_back(addr - region->start + region->offset);
+            trace_offsets.push_back({
+                addr - region->start + region->offset,
+                region->pathname
+            });
         } else {
-            trace_offsets.push_back(addr);
+            trace_offsets.push_back({addr, "unknown"});
         }
     }
 
     auto hash = hash_trace(trace_offsets);
 
     debug_print("Stack trace hash: {:#x}\n", hash);
-
-    debug_print("Stack trace:\n");
-    for (const auto& addr : stack_trace) {
-        auto *region = region_for_address(regions, addr);
-        if (region) {
-            debug_print("  {:#x} ({}+{:#x})\n", addr, region->pathname,
-                        addr - region->start + region->offset);
-        } else {
-            debug_print("  {:#x} (unknown region)\n", addr);
-        }
-    }
 
     FILE *auxv_file = fopen(std::format("/proc/{}/auxv", pid).c_str(), "rb");
     if (!auxv_file) {
@@ -360,7 +352,7 @@ job_result get_crash_result_for_pid(int pid, int sig, elf_exe_cache &cache, std:
     auto auxv = get_important_auxv(auxv_data);
     auto image_base = figure_out_image_base(*exe, auxv);
 
-    return job_result::crashed(sig, registers, stack_trace, hash, pid);
+    return job_result::crashed(sig, registers, trace_offsets, hash, pid);
 }
 
 memory_region *region_for_address(std::vector<memory_region> &regions, uint64_t address) {
