@@ -46,17 +46,10 @@ COPY example_inputs /example_inputs
 COPY binaries /binaries
 RUN mkdir /fuzzer_output
 
-
 # Compile it
 # Build harness
 RUN rm -f /app/src/harness/harness && g++ -std=c++2b -O3 -o /app/src/harness/harness /app/src/harness/harness.cpp
 
-# Install numpy
-# Build harness
-RUN python3 -m venv /app/src/venv && /app/src/venv/bin/pip3 install numpy && /app/src/venv/bin/pip3 install pikepdf && /app/src/venv/bin/pip3 install fontTools 
+# Run wrapper script
+CMD ["/app/src/fuzzer/wrapper"]
 
-
-# Run it.
-# CMD ["uv", "run", "fuzzer/main.py"]
-CMD ["/app/src/venv/bin/python3", "fuzzer/main.py"]
-# CMD ["python3", "main.py"]
