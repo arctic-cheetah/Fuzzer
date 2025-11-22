@@ -29,9 +29,20 @@ mkdir -p /app/binaries /app/example_inputs
 cp -fv /binaries/* /app/binaries
 cp -fv /example_inputs/* /app/example_inputs
 
-for bin in /app/binaries/*
-do
-    printf 'bin = %s\n' "$bin"
-done
+# decide #jobs to run
+if test x"$(nproc)" = x1
+then
+    njobs=2
+else
+    njobs=$(nproc)
+fi
 
-#/app/src/venv/bin/python3 /app/src/fuzzer/main.py
+# call one fuzzer for each binary in parallel
+parallel -j $njobs \
+         /app/src/venv/bin/python3 /app/src/fuzzer/main.py \
+         --bin '{}' --input '/app/example_inputs/{/}.txt' \
+         ::: /app/binaries/* \
+    || :
+
+# list fuzzer ouputs
+ls -ahl /fuzzer_output

@@ -23,6 +23,7 @@ this is the entry point of the fuzzer, i.e. the scheduler.
 # i.e. For /binaries/xml2 your fuzzer should create /fuzzer_output/bad_xml2.txt.
 # Note: Your fuzzer will have 60 seconds per challenge (on average). If there are 10 binaries, you fuzzer will be stopped after 600 seconds (10 minutes)
 
+import argparse
 from pathlib import Path
 from globals import PATH_TO_HARNESS, mount_point
 import struct
@@ -37,40 +38,16 @@ import shared_memory
 
 
 def main():
-    # 1) Fork the harness so the shm is set
-    # print(f"Starting harness at {PATH_TO_HARNESS}")
-    # TODO: refactor input to generalise later:
-    # GET_progname
-    example_inputs = mount_point("example_inputs")
-    binary_path = mount_point("binaries")
-
-    # TODO:ASK LECTURER IF NAME OF INPUT AND BINARY FILE ARE THE SAME!
-# example_inputs + "/plaintext1.txt", 
-    bin_arr = []
-    input_arr = []
-    for filename in os.listdir(binary_path):
-        bin_arr.append(os.path.join(binary_path, filename))
-    for filename in os.listdir(example_inputs):
-        input_arr.append(os.path.join(example_inputs, filename))
-    
-    test_arr = [input_arr, bin_arr]
-
-    # TODO: Parallelise here later!
-    for x in range(0, len(bin_arr)):
-        in_data = input_arr[x]
-        binary_path = bin_arr[x]
-        # TODO: CALL FUZZER HERE
-        file_type = file_type_check.detect_input_file_type(in_data)
-        print(f"Discovered input type is: {file_type}")
-        fuzzer = make_fuzzer(file_type, in_data, binary_path)
-        fuzzer.run_binary()
-
-    # input_len = struct.unpack_from("I", shm, 0)
-    # process_flag = struct.unpack_from("I", shm, 4)
-    # return_code_flag = struct.unpack_from("I", shm, 8)
-    # bitmap =
-
-    # file_type.run_challenge1_against_examples(example_inputs, binary_path)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--bin', help='binary path')
+    parser.add_argument("--input", help='input path')
+    args = parser.parse_args()
+    binary_path = args.bin
+    in_data = args.input
+    file_type = file_type_check.detect_input_file_type(in_data)
+    print(f"Discovered input type is: {file_type}")
+    fuzzer = make_fuzzer(file_type, in_data, binary_path)
+    fuzzer.run_binary()
 
 
 if __name__ == "__main__":
