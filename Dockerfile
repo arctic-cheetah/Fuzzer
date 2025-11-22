@@ -53,7 +53,8 @@ RUN rm -f /app/src/harness/harness && g++ -std=c++2b -O3 -o /app/src/harness/har
 
 # Install numpy
 # Build harness
-RUN python3 -m venv /app/src/venv && /app/src/venv/bin/pip3 install numpy
+RUN python3 -m venv /app/src/venv && /app/src/venv/bin/pip3 install numpy && /app/src/venv/bin/pip3 install pikepdf && /app/src/venv/bin/pip3 install fontTools 
+
 
 # Run it.
 # CMD ["uv", "run", "fuzzer/main.py"]
